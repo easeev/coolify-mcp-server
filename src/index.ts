@@ -14,24 +14,15 @@ interface CoolifyConfig {
   token: string;
 }
 
-interface CoolifyVersion {
-  version: string;
-  major: number;
-  minor: number;
-  patch: number;
-  beta?: number;
-}
-
 class CoolifyServer {
   private server: Server;
   private axiosInstance: AxiosInstance | null = null;
-  private coolifyVersion: CoolifyVersion | null = null;
 
   constructor() {
     this.server = new Server(
       {
         name: 'coolify-mcp-server',
-        version: '0.1.13',
+        version: '4.1.1',
       },
       {
         capabilities: {
@@ -40,7 +31,6 @@ class CoolifyServer {
       }
     );
 
-    // Error handling
     this.server.onerror = (error) => console.error('[MCP Error]', error);
     process.on('SIGINT', async () => {
       await this.server.close();
@@ -55,10 +45,9 @@ class CoolifyServer {
         'Authorization': `Bearer ${config.token}`,
         'Content-Type': 'application/json'
       },
-      timeout: 30000 // 30 second timeout
+      timeout: 30000
     });
 
-    // Add response interceptor for rate limiting
     this.axiosInstance.interceptors.response.use(
       (response) => response,
       (error) => {
@@ -72,433 +61,265 @@ class CoolifyServer {
     );
   }
 
-  private async detectCoolifyVersion(): Promise<void> {
-    if (!this.axiosInstance) return;
-    
-    try {
-      const response = await this.axiosInstance.get('/version');
-      const versionString = response.data?.version || response.data?.coolify || 'unknown';
-      this.coolifyVersion = this.parseVersion(versionString);
-    } catch (error) {
-      console.error('Could not detect Coolify version:', error);
-      // Set a default compatible version
-      this.coolifyVersion = { version: '4.0.0-beta.420', major: 4, minor: 0, patch: 0, beta: 420 };
-    }
-  }
-
-  private parseVersion(versionString: string): CoolifyVersion {
-    const match = versionString.match(/^v?(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?/);
-    if (match) {
-      return {
-        version: versionString,
-        major: parseInt(match[1]),
-        minor: parseInt(match[2]),
-        patch: parseInt(match[3]),
-        beta: match[4] ? parseInt(match[4]) : undefined
-      };
-    }
-    // Fallback for unknown version format
-    return { version: versionString, major: 4, minor: 0, patch: 0, beta: 420 };
-  }
-
-  private isFeatureAvailable(feature: string): boolean {
-    if (!this.coolifyVersion) return true; // Assume available if version unknown
-    
-    const { major, minor, patch, beta } = this.coolifyVersion;
-    
-    // Define feature availability based on version
-    switch (feature) {
-      case 'health_check':
-        return true; // Health endpoint is available in the API docs
-      case 'execute_command':
-        return beta ? beta >= 400 : major >= 4; // Available from beta.400+
-      case 'application_logs':
-        return beta ? beta >= 380 : major >= 4; // Available from beta.380+
-      default:
-        return true; // Assume other features are available
-    }
-  }
-
   private setupToolHandlers() {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: [
-        // Version & Health
+        // ── General ──────────────────────────────────────────────────────────
         {
           name: 'get_version',
-          description: 'Get Coolify version information. Returns the current version of the Coolify instance.',
-          inputSchema: {
-            type: 'object',
-            properties: {},
-            required: [],
-            examples: [{}]
-          }
+          description: 'Get the Coolify version string (e.g. "v4.1.1").',
+          inputSchema: { type: 'object', properties: {}, required: [] }
         },
         {
           name: 'health_check',
-          description: 'Check Coolify API health status. Note: This endpoint may not be available in all Coolify versions.',
-          inputSchema: {
-            type: 'object',
-            properties: {},
-            required: [],
-            examples: [{}]
-          }
+          description: 'Healthcheck endpoint. Does not require authentication. Returns "OK" when the API is up.',
+          inputSchema: { type: 'object', properties: {}, required: [] }
         },
-        // Teams
+        {
+          name: 'enable_api',
+          description: 'Enable the Coolify API. Requires root-level token.',
+          inputSchema: { type: 'object', properties: {}, required: [] }
+        },
+        {
+          name: 'disable_api',
+          description: 'Disable the Coolify API. Requires root-level token.',
+          inputSchema: { type: 'object', properties: {}, required: [] }
+        },
+        {
+          name: 'enable_mcp',
+          description: 'Enable the built-in Coolify MCP server endpoint at /mcp. Requires root-level token.',
+          inputSchema: { type: 'object', properties: {}, required: [] }
+        },
+        {
+          name: 'disable_mcp',
+          description: 'Disable the built-in Coolify MCP server endpoint at /mcp. Requires root-level token.',
+          inputSchema: { type: 'object', properties: {}, required: [] }
+        },
+
+        // ── Teams ─────────────────────────────────────────────────────────────
         {
           name: 'list_teams',
-          description: 'List all teams the authenticated user has access to. Use this to get team UUIDs needed for other operations.',
-          inputSchema: {
-            type: 'object',
-            properties: {},
-            required: [],
-            examples: [{}],
-            additionalInfo: {
-              responseFormat: 'Returns an array of team objects, each containing: id (UUID), name, and other team details',
-              usage: 'Call this first to get team IDs needed for get_team or other team-related operations'
-            }
-          }
+          description: 'List all teams the authenticated token has access to.',
+          inputSchema: { type: 'object', properties: {}, required: [] }
         },
         {
           name: 'get_team',
-          description: 'Get details of a specific team. Requires a team ID obtained from list_teams.',
+          description: 'Get details of a specific team by its numeric ID.',
           inputSchema: {
             type: 'object',
             properties: {
-              team_id: {
-                type: 'string',
-                description: 'ID of the team to retrieve. This is typically a numeric ID obtained from the list_teams response.',
-                examples: ['0', '1', '42']
-              }
+              team_id: { type: 'string', description: 'Numeric team ID (e.g. "0", "1").' }
             },
-            required: ['team_id'],
-            examples: [
-              {
-                team_id: 'sg4gsws44wksg040o4ok80ww'
-              }
-            ],
-            additionalInfo: {
-              workflow: [
-                '1. First call list_teams to get available team UUIDs',
-                '2. Use a team UUID from the response in this operation'
-              ]
-            }
+            required: ['team_id']
+          }
+        },
+        {
+          name: 'get_team_members',
+          description: 'Get members of a specific team by its numeric ID.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              team_id: { type: 'string', description: 'Numeric team ID.' }
+            },
+            required: ['team_id']
           }
         },
         {
           name: 'get_current_team',
-          description: 'Get details of the currently authenticated team. This is the team associated with your API token.',
-          inputSchema: {
-            type: 'object',
-            properties: {},
-            required: [],
-            examples: [{}],
-            additionalInfo: {
-              responseFormat: 'Returns a team object containing id (UUID), name, and other team details',
-              usage: 'Use this to quickly get information about your current team context',
-              notes: [
-                'No parameters needed - uses the team context from your API token',
-                'Useful for verifying your current team access',
-                'Returns the same format as get_team but for the current context'
-              ]
-            }
-          }
+          description: 'Get the team associated with the current API token.',
+          inputSchema: { type: 'object', properties: {}, required: [] }
         },
         {
           name: 'get_current_team_members',
-          description: 'Get a list of all members in the currently authenticated team. Shows who has access to team resources.',
-          inputSchema: {
-            type: 'object',
-            properties: {},
-            required: [],
-            examples: [{}],
-            additionalInfo: {
-              responseFormat: 'Returns an array of team member objects containing user information and roles',
-              usage: 'Use this to manage team access and verify member permissions',
-              notes: [
-                'No parameters needed - uses the team context from your API token',
-                'Member information includes usernames, roles, and status',
-                'Useful for auditing team access and permissions'
-              ]
-            }
-          }
+          description: 'Get members of the current authenticated team.',
+          inputSchema: { type: 'object', properties: {}, required: [] }
         },
-        // Servers
+
+        // ── Servers ───────────────────────────────────────────────────────────
         {
           name: 'list_servers',
-          description: 'List all servers registered in your Coolify instance. Use this to get server UUIDs needed for other operations.',
+          description: 'List all servers registered in Coolify.',
+          inputSchema: { type: 'object', properties: {}, required: [] }
+        },
+        {
+          name: 'get_server',
+          description: 'Get details of a server by UUID.',
           inputSchema: {
             type: 'object',
-            properties: {},
-            required: [],
-            examples: [{}],
-            additionalInfo: {
-              responseFormat: 'Returns an array of server objects containing UUIDs, names, IP addresses, and configuration details',
-              usage: 'Call this first to get server UUIDs needed for other server operations',
-              notes: [
-                'Lists all servers accessible to your team',
-                'Server details include name, IP, status, and configuration',
-                'UUIDs from this response are used in many other operations',
-                'Use this to find servers for deploying applications or services'
-              ],
-              relatedTools: [
-                'create_server - Add new servers to your instance',
-                'validate_server - Check server configuration',
-                'get_server_resources - Monitor server status',
-                'get_server_domains - Manage server domains'
-              ]
-            }
+            properties: { uuid: { type: 'string', description: 'Server UUID.' } },
+            required: ['uuid']
           }
         },
         {
           name: 'create_server',
-          description: 'Create a new server in Coolify. Requires SSH access details and a private key for authentication.',
+          description: 'Register a new server in Coolify.',
           inputSchema: {
             type: 'object',
             properties: {
-              name: { 
-                type: 'string',
-                description: 'A unique, human-readable name for the server',
-                examples: ['production-server-1']
-              },
-              description: { 
-                type: 'string',
-                description: 'Optional description of the server\'s purpose or configuration',
-                examples: ['Main production server for customer-facing applications']
-              },
-              ip: { 
-                type: 'string',
-                description: 'IP address of the server. Can be IPv4 or IPv6.',
-                pattern: '^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$|^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$',
-                examples: ['192.168.1.100']
-              },
-              port: { 
-                type: 'number',
-                description: 'SSH port number',
-                minimum: 1,
-                maximum: 65535,
-                default: 22,
-                examples: [22]
-              },
-              user: { 
-                type: 'string',
-                description: 'SSH username for authentication',
-                examples: ['root']
-              },
-              private_key_uuid: { 
-                type: 'string',
-                description: 'UUID of the private key to use for SSH authentication. Obtain this from list_private_keys.',
-                pattern: '^[a-zA-Z0-9]+$'
-              },
-              is_build_server: { 
-                type: 'boolean',
-                description: 'Whether this server should be used for building applications',
-                default: false
-              },
-              instant_validate: { 
-                type: 'boolean',
-                description: 'Whether to validate the server configuration immediately after creation',
-                default: true
-              },
-              proxy_type: { 
-                type: 'string',
-                description: 'Type of proxy to use for this server',
-                enum: ['none', 'nginx', 'caddy'],
-                default: 'nginx'
-              }
+              name: { type: 'string', description: 'Human-readable name for the server.' },
+              description: { type: 'string', description: 'Optional description.' },
+              ip: { type: 'string', description: 'IP address of the server.' },
+              port: { type: 'number', description: 'SSH port (default 22).', default: 22 },
+              user: { type: 'string', description: 'SSH username (default root).', default: 'root' },
+              private_key_uuid: { type: 'string', description: 'UUID of the private key for SSH auth.' },
+              is_build_server: { type: 'boolean', description: 'Whether to use as a build server.', default: false },
+              instant_validate: { type: 'boolean', description: 'Validate immediately after creation.', default: false },
+              proxy_type: { type: 'string', enum: ['traefik', 'caddy', 'none'], description: 'Proxy type.', default: 'traefik' }
             },
-            required: ['name', 'ip', 'port', 'user', 'private_key_uuid'],
-            examples: [
-              {
-                name: 'production-server-1',
-                description: 'Main production server',
-                ip: '192.168.1.100',
-                port: 22,
-                user: 'root',
-                private_key_uuid: 'sg4gsws44wksg040o4ok80ww',
-                is_build_server: false,
-                instant_validate: true,
-                proxy_type: 'nginx'
-              }
-            ],
-            additionalInfo: {
-              workflow: [
-                '1. First call list_private_keys to get available private key UUIDs',
-                '2. Use a private key UUID from the response when creating the server',
-                '3. After creation, you may want to call validate_server to ensure proper configuration'
-              ],
-              relatedTools: [
-                'list_private_keys - Get available private keys',
-                'validate_server - Validate server configuration',
-                'get_server_resources - Monitor server resources',
-                'get_server_domains - Manage server domains'
-              ]
-            }
+            required: ['name', 'ip', 'port', 'user', 'private_key_uuid']
+          }
+        },
+        {
+          name: 'update_server',
+          description: 'Update an existing server by UUID.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Server UUID.' },
+              name: { type: 'string' },
+              description: { type: 'string' },
+              ip: { type: 'string' },
+              port: { type: 'number' },
+              user: { type: 'string' },
+              private_key_uuid: { type: 'string' },
+              is_build_server: { type: 'boolean' },
+              instant_validate: { type: 'boolean' },
+              proxy_type: { type: 'string', enum: ['traefik', 'caddy', 'none'] },
+              concurrent_builds: { type: 'number' },
+              dynamic_timeout: { type: 'number' },
+              deployment_queue_limit: { type: 'number' }
+            },
+            required: ['uuid']
+          }
+        },
+        {
+          name: 'delete_server',
+          description: 'Delete a server by UUID.',
+          inputSchema: {
+            type: 'object',
+            properties: { uuid: { type: 'string', description: 'Server UUID.' } },
+            required: ['uuid']
           }
         },
         {
           name: 'validate_server',
-          description: 'Validate a server\'s configuration and connectivity. Use this to verify server setup and troubleshoot connection issues.',
+          description: 'Validate server connectivity and configuration.',
           inputSchema: {
             type: 'object',
-            properties: {
-              uuid: {
-                type: 'string',
-                description: 'ID of the server to validate. Get this from list_servers.',
-                examples: ['f8wcgww']
-              }
-            },
-            required: ['uuid'],
-            examples: [
-              {
-                uuid: 'sg4gsws44wksg040o4ok80ww'
-              }
-            ],
-            additionalInfo: {
-              workflow: [
-                '1. Get server UUID from list_servers',
-                '2. Run validation',
-                '3. Check results for any configuration issues'
-              ],
-              notes: [
-                'Validates SSH connectivity and server requirements',
-                'Checks for required software and configurations',
-                'Reports any issues that need to be addressed',
-                'Recommended after server creation or configuration changes'
-              ]
-            }
+            properties: { uuid: { type: 'string', description: 'Server UUID.' } },
+            required: ['uuid']
           }
         },
         {
           name: 'get_server_resources',
-          description: 'Get a list of applications and services running on a server. This provides an overview of all resources deployed on the specified server.',
+          description: 'Get all resources (applications, databases, services) running on a server.',
           inputSchema: {
             type: 'object',
-            properties: {
-              uuid: {
-                type: 'string',
-                description: 'ID of the server to check. Get this from list_servers.',
-                examples: ['f8wcgww']
-              }
-            },
-            required: ['uuid'],
-            examples: [
-              {
-                uuid: 'sg4gsws44wksg040o4ok80ww'
-              }
-            ],
-            additionalInfo: {
-              responseFormat: 'Returns an array of applications and services running on the server',
-              usage: 'Monitor what is deployed on a server and check their status',
-              notes: [
-                'Lists all applications and services on the specified server',
-                'Includes status information (running, stopped, healthy, unhealthy)',
-                'Helps identify which resources are deployed on a server',
-                'Useful for server management and troubleshooting'
-              ]
-            }
+            properties: { uuid: { type: 'string', description: 'Server UUID.' } },
+            required: ['uuid']
           }
         },
         {
           name: 'get_server_domains',
-          description: 'Get a list of domains configured for a server. These domains are used for routing traffic to applications and services.',
+          description: 'Get all domains configured on a server.',
+          inputSchema: {
+            type: 'object',
+            properties: { uuid: { type: 'string', description: 'Server UUID.' } },
+            required: ['uuid']
+          }
+        },
+        {
+          name: 'create_hetzner_server',
+          description: 'Create a Hetzner Cloud server and register it in Coolify.',
           inputSchema: {
             type: 'object',
             properties: {
-              uuid: {
-                type: 'string',
-                description: 'ID of the server to get domains for. Get this from list_servers.',
-                examples: ['f8wcgww']
-              }
+              location: { type: 'string', description: 'Hetzner datacenter location (e.g. nbg1, fsn1, hel1).' },
+              server_type: { type: 'string', description: 'Hetzner server type (e.g. cx11, cx21).' },
+              image: { type: 'string', description: 'OS image name (e.g. ubuntu-22.04).' },
+              private_key_uuid: { type: 'string', description: 'UUID of the private key for SSH auth.' },
+              cloud_provider_token_uuid: { type: 'string', description: 'UUID of the Hetzner cloud token.' },
+              name: { type: 'string', description: 'Optional server name.' },
+              enable_ipv4: { type: 'boolean', default: true },
+              enable_ipv6: { type: 'boolean', default: false },
+              hetzner_ssh_key_ids: { type: 'array', items: { type: 'number' }, description: 'Hetzner SSH key IDs to attach.' },
+              cloud_init_script: { type: 'string', description: 'Cloud-init script (base64 encoded).' },
+              instant_validate: { type: 'boolean', default: false }
             },
-            required: ['uuid'],
-            examples: [
-              {
-                uuid: 'sg4gsws44wksg040o4ok80ww'
-              }
-            ],
-            additionalInfo: {
-              responseFormat: 'Returns an array of domain configurations',
-              usage: 'Manage and monitor domain routing for applications',
-              notes: [
-                'Shows all domains configured for the server',
-                'Includes routing and SSL certificate information',
-                'Used for managing application access',
-                'Important for setting up public access to applications'
-              ]
-            }
+            required: ['location', 'server_type', 'image', 'private_key_uuid']
           }
         },
-        // Projects
+
+        // ── Projects ──────────────────────────────────────────────────────────
         {
           name: 'list_projects',
-          description: 'List all projects accessible by the current user. Projects organize applications and services into logical groups.',
-          inputSchema: {
-            type: 'object',
-            properties: {},
-            required: [],
-            examples: [{}],
-            additionalInfo: {
-              responseFormat: 'Returns an array of project objects containing UUIDs, names, descriptions, and team associations',
-              usage: 'Use this to get project UUIDs needed for creating applications and services'
-            }
-          }
+          description: 'List all projects.',
+          inputSchema: { type: 'object', properties: {}, required: [] }
         },
         {
           name: 'get_project',
-          description: 'Get details of a specific project including its environments.',
+          description: 'Get a project by UUID.',
           inputSchema: {
             type: 'object',
-            properties: {
-              project_uuid: {
-                type: 'string',
-                description: 'UUID of the project to retrieve. Get this from list_projects.',
-                pattern: '^[a-zA-Z0-9]+$',
-                examples: ['sg4gsws44wksg040o4ok80ww']
-              }
-            },
-            required: ['project_uuid'],
-            examples: [{ project_uuid: 'sg4gsws44wksg040o4ok80ww' }]
+            properties: { project_uuid: { type: 'string', description: 'Project UUID.' } },
+            required: ['project_uuid']
           }
         },
         {
           name: 'create_project',
-          description: 'Create a new project to organize applications and services.',
+          description: 'Create a new project.',
           inputSchema: {
             type: 'object',
             properties: {
-              name: {
-                type: 'string',
-                description: 'Name of the project',
-                examples: ['My App']
-              },
-              description: {
-                type: 'string',
-                description: 'Optional description of the project',
-                examples: ['Production environment for my application']
-              }
+              name: { type: 'string', description: 'Project name.' },
+              description: { type: 'string', description: 'Optional description.' }
             },
-            required: ['name'],
-            examples: [
-              { name: 'My App', description: 'Production environment for my application' }
-            ]
+            required: ['name']
           }
         },
-        // Environments  
         {
-          name: 'list_environments',
-          description: 'List all environments in a project. Environments separate different deployment stages like production, staging, development.',
+          name: 'update_project',
+          description: 'Update a project by UUID.',
           inputSchema: {
             type: 'object',
             properties: {
-              project_uuid: {
-                type: 'string',
-                description: 'UUID of the project to list environments for. Get this from list_projects.',
-                pattern: '^[a-zA-Z0-9]+$',
-                examples: ['sg4gsws44wksg040o4ok80ww']
-              }
+              project_uuid: { type: 'string', description: 'Project UUID.' },
+              name: { type: 'string' },
+              description: { type: 'string' }
             },
-            required: ['project_uuid'],
-            examples: [{ project_uuid: 'sg4gsws44wksg040o4ok80ww' }]
+            required: ['project_uuid']
+          }
+        },
+        {
+          name: 'delete_project',
+          description: 'Delete a project by UUID.',
+          inputSchema: {
+            type: 'object',
+            properties: { project_uuid: { type: 'string', description: 'Project UUID.' } },
+            required: ['project_uuid']
+          }
+        },
+
+        // ── Environments ──────────────────────────────────────────────────────
+        {
+          name: 'list_environments',
+          description: 'List all environments in a project.',
+          inputSchema: {
+            type: 'object',
+            properties: { project_uuid: { type: 'string', description: 'Project UUID.' } },
+            required: ['project_uuid']
+          }
+        },
+        {
+          name: 'get_environment',
+          description: 'Get an environment by name or UUID within a project.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              project_uuid: { type: 'string', description: 'Project UUID.' },
+              environment_name_or_uuid: { type: 'string', description: 'Environment name or UUID.' }
+            },
+            required: ['project_uuid', 'environment_name_or_uuid']
           }
         },
         {
@@ -507,694 +328,1125 @@ class CoolifyServer {
           inputSchema: {
             type: 'object',
             properties: {
-              project_uuid: {
-                type: 'string',
-                description: 'UUID of the project where this environment will be created',
-                pattern: '^[a-zA-Z0-9]+$',
-                examples: ['sg4gsws44wksg040o4ok80ww']
-              },
-              name: {
-                type: 'string',
-                description: 'Name of the environment',
-                examples: ['staging', 'production', 'development']
-              },
-              description: {
-                type: 'string',
-                description: 'Optional description of the environment',
-                examples: ['Staging environment for testing']
-              }
+              project_uuid: { type: 'string', description: 'Project UUID.' },
+              name: { type: 'string', description: 'Environment name (e.g. production, staging).' }
             },
-            required: ['project_uuid', 'name'],
-            examples: [
-              { project_uuid: 'sg4gsws44wksg040o4ok80ww', name: 'staging', description: 'Staging environment for testing' }
-            ]
+            required: ['project_uuid', 'name']
+          }
+        },
+        {
+          name: 'delete_environment',
+          description: 'Delete an environment (must be empty) from a project.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              project_uuid: { type: 'string', description: 'Project UUID.' },
+              environment_name_or_uuid: { type: 'string', description: 'Environment name or UUID.' }
+            },
+            required: ['project_uuid', 'environment_name_or_uuid']
           }
         },
 
-        // Services
-        {
-          name: 'list_services',
-          description: 'List all services across your Coolify instance. Services are containerized applications running on your servers.',
-          inputSchema: {
-            type: 'object',
-            properties: {},
-            required: [],
-            examples: [{}],
-            additionalInfo: {
-              responseFormat: 'Returns an array of service objects containing UUIDs, names, status, and configuration details',
-              usage: 'Use this to get service UUIDs needed for management operations',
-              notes: [
-                'Lists all services accessible to your team',
-                'Service details include name, status, and configuration',
-                'UUIDs from this response are used in start/stop/restart operations',
-                'Monitor service status and health through this endpoint'
-              ],
-              relatedTools: [
-                'create_service - Create new services',
-                'start_service - Start a service',
-                'stop_service - Stop a service',
-                'restart_service - Restart a service'
-              ]
-            }
-          }
-        },
-        {
-          name: 'create_service',
-          description: 'Create a new service on a specified server. Services are containerized applications that run on your Coolify servers. Either "type" or "docker_compose_raw" must be provided - you cannot specify both.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              name: { 
-                type: 'string',
-                description: 'A unique, human-readable name for the service',
-                examples: ['backend-api']
-              },
-              description: { 
-                type: 'string',
-                description: 'Optional description of the service\'s purpose or configuration',
-                examples: ['Node.js backend API service']
-              },
-              server_uuid: { 
-                type: 'string',
-                description: 'UUID of the server where this service will run. Obtain this from list_servers.',
-                pattern: '^[a-zA-Z0-9]+$'
-              },
-              project_uuid: { 
-                type: 'string',
-                description: 'UUID of the project this service belongs to. Projects help organize related services.',
-                pattern: '^[a-zA-Z0-9]+$'
-              },
-              environment_name: { 
-                type: 'string',
-                description: 'Name of the environment (e.g., production, staging, development)',
-                examples: ['production']
-              },
-              environment_uuid: { 
-                type: 'string',
-                description: 'Optional UUID of an existing environment to use',
-                pattern: '^[a-zA-Z0-9]+$'
-              },
-              type: {
-                type: 'string',
-                description: 'Type of service to create. Required if docker_compose_raw is not provided. Cannot be used together with docker_compose_raw.',
-                examples: ['mysql', 'redis', 'postgresql', 'mongodb']
-              },
-              docker_compose_raw: {
-                type: 'string',
-                description: 'Raw Docker Compose configuration for the service. Required if type is not provided. Cannot be used together with type.',
-                examples: ['version: \'3.8\'\nservices:\n  web:\n    image: nginx:alpine\n    ports:\n      - "80:80"']
-              }
-            },
-            required: ['name', 'server_uuid', 'project_uuid'],
-            examples: [
-              {
-                name: 'backend-api',
-                description: 'Node.js backend API service',
-                server_uuid: 'sg4gsws44wksg040o4ok80ww',
-                project_uuid: 'p4w8gk4s0c8c4o0ksw80ok4w',
-                environment_name: 'production',
-                type: 'mysql'
-              },
-              {
-                name: 'custom-web-service',
-                description: 'Custom web service with Docker Compose',
-                server_uuid: 'sg4gsws44wksg040o4ok80ww',
-                project_uuid: 'p4w8gk4s0c8c4o0ksw80ok4w',
-                environment_name: 'production',
-                docker_compose_raw: 'version: \'3.8\'\nservices:\n  web:\n    image: nginx:alpine\n    ports:\n      - "80:80"'
-              }
-            ],
-            additionalInfo: {
-              workflow: [
-                '1. First call list_servers to get available server UUIDs',
-                '2. Use a server UUID from the response when creating the service',
-                '3. Choose either "type" for predefined services or "docker_compose_raw" for custom configurations',
-                '4. After creation, you can start the service using start_service'
-              ],
-              relatedTools: [
-                'list_servers - Get available servers',
-                'start_service - Start the service',
-                'stop_service - Stop the service',
-                'restart_service - Restart the service'
-              ],
-              notes: [
-                'Services are tied to specific servers and projects',
-                'Environment configuration helps organize services across different deployment stages',
-                'Either "type" or "docker_compose_raw" must be provided, but not both',
-                'Use "type" for predefined service templates (mysql, redis, postgresql, etc.)',
-                'Use "docker_compose_raw" for custom Docker Compose configurations',
-                'After creating a service, you\'ll need its UUID for management operations'
-              ]
-            }
-          }
-        },
-        {
-          name: 'start_service',
-          description: 'Start a previously created service. This will initialize the service container and make it accessible.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              uuid: {
-                type: 'string',
-                description: 'UUID of the service to start. Obtain this from list_services or from the create_service response.',
-                pattern: '^[a-zA-Z0-9]+$'
-              }
-            },
-            required: ['uuid'],
-            examples: [
-              {
-                uuid: 'sg4gsws44wksg040o4ok80ww'
-              }
-            ],
-            additionalInfo: {
-              workflow: [
-                '1. Get the service UUID from list_services',
-                '2. Start the service',
-                '3. Monitor the service status'
-              ],
-              relatedTools: [
-                'list_services - Get UUIDs of available services',
-                'stop_service - Stop the service if needed',
-                'restart_service - Restart if issues occur'
-              ],
-              notes: [
-                'Service must be properly configured before starting',
-                'Starting may take a few moments depending on the service',
-                'Check service logs if startup issues occur'
-              ]
-            }
-          }
-        },
-        {
-          name: 'stop_service',
-          description: 'Stop a running service. This will gracefully shut down the service container.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              uuid: {
-                type: 'string',
-                description: 'UUID of the service to stop. Get this from list_services.',
-                pattern: '^[a-zA-Z0-9]+$'
-              }
-            },
-            required: ['uuid'],
-            examples: [
-              {
-                uuid: 'sg4gsws44wksg040o4ok80ww'
-              }
-            ],
-            additionalInfo: {
-              workflow: [
-                '1. Get the service UUID from list_services',
-                '2. Stop the service',
-                '3. Verify the service has stopped'
-              ],
-              relatedTools: [
-                'list_services - Get UUIDs of available services',
-                'start_service - Restart the service when needed'
-              ],
-              notes: [
-                'Stopping a service will interrupt its operations',
-                'Service data persists unless explicitly removed',
-                'Use restart_service if you plan to start again immediately'
-              ]
-            }
-          }
-        },
-        {
-          name: 'restart_service',
-          description: 'Restart a service by stopping and starting it again. Useful for applying configuration changes or recovering from issues.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              uuid: {
-                type: 'string',
-                description: 'UUID of the service to restart. Get this from list_services.',
-                pattern: '^[a-zA-Z0-9]+$'
-              }
-            },
-            required: ['uuid'],
-            examples: [
-              {
-                uuid: 'sg4gsws44wksg040o4ok80ww'
-              }
-            ],
-            additionalInfo: {
-              workflow: [
-                '1. Get the service UUID from list_services',
-                '2. Restart the service',
-                '3. Monitor the service status'
-              ],
-              relatedTools: [
-                'list_services - Get UUIDs of available services',
-                'start_service - Start the service if restart fails',
-                'stop_service - Stop the service if restart hangs'
-              ],
-              notes: [
-                'Restart performs a graceful stop and start',
-                'Service will be briefly unavailable during restart',
-                'Useful for applying configuration changes',
-                'Monitor service after restart to ensure proper operation'
-              ]
-            }
-          }
-        },
-        // Applications
+        // ── Applications ──────────────────────────────────────────────────────
         {
           name: 'list_applications',
-          description: 'List all applications across your Coolify instance. Applications are deployable units sourced from Git repositories.',
-          inputSchema: {
-            type: 'object',
-            properties: {},
-            required: [],
-            examples: [{}],
-            additionalInfo: {
-              responseFormat: 'Returns an array of application objects containing UUIDs, names, Git repository details, and deployment status',
-              usage: 'Use this to get application UUIDs needed for management operations',
-              notes: [
-                'Lists all applications accessible to your team',
-                'Application details include repository, environment, and status',
-                'UUIDs from this response are used in many other operations',
-                'Monitor application status and deployment state'
-              ],
-              relatedTools: [
-                'create_application - Create new applications',
-                'start_application - Start an application',
-                'stop_application - Stop an application',
-                'restart_application - Restart an application',
-                'execute_command_application - Run commands in applications'
-              ]
-            }
-          }
-        },
-        {
-          name: 'create_application',
-          description: 'Create a new application in Coolify. Applications are deployable units that can be sourced from Git repositories.',
+          description: 'List all applications. Optionally filter by tag.',
           inputSchema: {
             type: 'object',
             properties: {
-              project_uuid: { 
-                type: 'string',
-                description: 'UUID of the project this application belongs to. Projects help organize related applications.',
-                pattern: '^[a-zA-Z0-9]+$'
-              },
-              environment_name: { 
-                type: 'string',
-                description: 'Name of the deployment environment (e.g., production, staging, development)',
-                examples: ['production', 'staging', 'development']
-              },
-              environment_uuid: { 
-                type: 'string',
-                description: 'Optional UUID of an existing environment to use',
-                pattern: '^[a-zA-Z0-9]+$'
-              },
-              git_repository: { 
-                type: 'string',
-                description: 'URL of the Git repository containing the application code',
-                examples: ['https://github.com/username/repo.git']
-              },
-              ports_exposes: { 
-                type: 'string',
-                description: 'Comma-separated list of ports to expose (e.g., "3000,8080"). These ports will be accessible from outside the container.',
-                examples: ['3000', '8080,3000']
-              },
-              destination_uuid: { 
-                type: 'string',
-                description: 'UUID of the destination server where this application will be deployed. Get this from list_servers.',
-                pattern: '^[a-zA-Z0-9]+$'
-              }
+              tag: { type: 'string', description: 'Optional tag name to filter results.' }
             },
-            required: ['project_uuid', 'environment_name', 'destination_uuid'],
-            examples: [
-              {
-                project_uuid: 'sg4gsws44wksg040o4ok80ww',
-                environment_name: 'production',
-                git_repository: 'https://github.com/username/repo.git',
-                ports_exposes: '3000',
-                destination_uuid: 'p4w8gk4s0c8c4o0ksw80ok4w'
-              }
-            ],
-            additionalInfo: {
-              workflow: [
-                '1. First call list_servers to get available server UUIDs for the destination_uuid',
-                '2. Create the application with required parameters',
-                '3. After creation, you can start the application using start_application',
-                '4. Monitor the application status and logs as needed'
-              ],
-              relatedTools: [
-                'list_servers - Get available servers for deployment',
-                'start_application - Start the application',
-                'stop_application - Stop the application',
-                'restart_application - Restart the application',
-                'execute_command_application - Run commands in the application container'
-              ],
-              notes: [
-                'Applications are tied to specific projects and environments',
-                'The Git repository should be accessible by the Coolify server',
-                'Exposed ports must be available on the destination server',
-                'After creating an application, you\'ll need its UUID for management operations'
-              ]
-            }
+            required: []
+          }
+        },
+        {
+          name: 'get_application',
+          description: 'Get an application by UUID.',
+          inputSchema: {
+            type: 'object',
+            properties: { uuid: { type: 'string', description: 'Application UUID.' } },
+            required: ['uuid']
+          }
+        },
+        {
+          name: 'create_public_application',
+          description: 'Create an application from a public Git repository.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              project_uuid: { type: 'string' },
+              server_uuid: { type: 'string' },
+              environment_name: { type: 'string', description: 'Required if environment_uuid not provided.' },
+              environment_uuid: { type: 'string', description: 'Required if environment_name not provided.' },
+              git_repository: { type: 'string', description: 'Public Git repo URL.' },
+              git_branch: { type: 'string', description: 'Git branch to deploy.' },
+              build_pack: { type: 'string', enum: ['nixpacks', 'railpack', 'static', 'dockerfile', 'dockercompose'] },
+              ports_exposes: { type: 'string', description: 'Comma-separated ports to expose (e.g. "3000").' },
+              name: { type: 'string' },
+              description: { type: 'string' },
+              domains: { type: 'string' },
+              destination_uuid: { type: 'string' },
+              instant_deploy: { type: 'boolean', default: false },
+              install_command: { type: 'string' },
+              build_command: { type: 'string' },
+              start_command: { type: 'string' },
+              base_directory: { type: 'string' },
+              publish_directory: { type: 'string' }
+            },
+            required: ['project_uuid', 'server_uuid', 'git_repository', 'git_branch', 'build_pack', 'ports_exposes']
+          }
+        },
+        {
+          name: 'create_private_github_app_application',
+          description: 'Create an application from a private GitHub repository using a GitHub App.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              project_uuid: { type: 'string' },
+              server_uuid: { type: 'string' },
+              environment_name: { type: 'string' },
+              environment_uuid: { type: 'string' },
+              github_app_uuid: { type: 'string', description: 'UUID of the GitHub App.' },
+              git_repository: { type: 'string' },
+              git_branch: { type: 'string' },
+              build_pack: { type: 'string', enum: ['nixpacks', 'railpack', 'static', 'dockerfile', 'dockercompose'] },
+              ports_exposes: { type: 'string' },
+              name: { type: 'string' },
+              instant_deploy: { type: 'boolean', default: false }
+            },
+            required: ['project_uuid', 'server_uuid', 'github_app_uuid', 'git_repository', 'git_branch', 'build_pack', 'ports_exposes']
+          }
+        },
+        {
+          name: 'create_private_deploy_key_application',
+          description: 'Create an application from a private repository using a Deploy Key.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              project_uuid: { type: 'string' },
+              server_uuid: { type: 'string' },
+              environment_name: { type: 'string' },
+              environment_uuid: { type: 'string' },
+              private_key_uuid: { type: 'string', description: 'UUID of the deploy key.' },
+              git_repository: { type: 'string' },
+              git_branch: { type: 'string' },
+              build_pack: { type: 'string', enum: ['nixpacks', 'railpack', 'static', 'dockerfile', 'dockercompose'] },
+              ports_exposes: { type: 'string' },
+              name: { type: 'string' },
+              instant_deploy: { type: 'boolean', default: false }
+            },
+            required: ['project_uuid', 'server_uuid', 'private_key_uuid', 'git_repository', 'git_branch', 'build_pack', 'ports_exposes']
+          }
+        },
+        {
+          name: 'create_dockerfile_application',
+          description: 'Create an application from a Dockerfile (no Git).',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              project_uuid: { type: 'string' },
+              server_uuid: { type: 'string' },
+              environment_name: { type: 'string' },
+              environment_uuid: { type: 'string' },
+              dockerfile: { type: 'string', description: 'Dockerfile content.' },
+              name: { type: 'string' },
+              ports_exposes: { type: 'string' },
+              instant_deploy: { type: 'boolean', default: false }
+            },
+            required: ['project_uuid', 'server_uuid', 'dockerfile']
+          }
+        },
+        {
+          name: 'create_dockerimage_application',
+          description: 'Create an application from a prebuilt Docker image.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              project_uuid: { type: 'string' },
+              server_uuid: { type: 'string' },
+              environment_name: { type: 'string' },
+              environment_uuid: { type: 'string' },
+              docker_registry_image_name: { type: 'string', description: 'Docker image name (e.g. nginx:latest).' },
+              ports_exposes: { type: 'string' },
+              name: { type: 'string' },
+              instant_deploy: { type: 'boolean', default: false }
+            },
+            required: ['project_uuid', 'server_uuid', 'docker_registry_image_name', 'ports_exposes']
+          }
+        },
+        {
+          name: 'create_dockercompose_application',
+          description: 'Create an application from a Docker Compose file (no Git).',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              project_uuid: { type: 'string' },
+              server_uuid: { type: 'string' },
+              environment_name: { type: 'string' },
+              environment_uuid: { type: 'string' },
+              docker_compose_raw: { type: 'string', description: 'Raw Docker Compose YAML content.' },
+              name: { type: 'string' },
+              instant_deploy: { type: 'boolean', default: false }
+            },
+            required: ['project_uuid', 'server_uuid']
+          }
+        },
+        {
+          name: 'update_application',
+          description: 'Update an application by UUID.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Application UUID.' },
+              name: { type: 'string' },
+              description: { type: 'string' },
+              domains: { type: 'string' },
+              git_branch: { type: 'string' },
+              build_pack: { type: 'string', enum: ['nixpacks', 'railpack', 'static', 'dockerfile', 'dockercompose'] },
+              install_command: { type: 'string' },
+              build_command: { type: 'string' },
+              start_command: { type: 'string' },
+              ports_exposes: { type: 'string' },
+              base_directory: { type: 'string' },
+              publish_directory: { type: 'string' },
+              is_auto_deploy_enabled: { type: 'boolean' }
+            },
+            required: ['uuid']
+          }
+        },
+        {
+          name: 'delete_application',
+          description: 'Delete an application by UUID.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Application UUID.' },
+              delete_configurations: { type: 'boolean', default: true },
+              delete_volumes: { type: 'boolean', default: true },
+              docker_cleanup: { type: 'boolean', default: true },
+              delete_connected_networks: { type: 'boolean', default: true }
+            },
+            required: ['uuid']
           }
         },
         {
           name: 'start_application',
-          description: 'Start a previously created application. This will initialize the application container and make it accessible.',
+          description: 'Start an application.',
           inputSchema: {
             type: 'object',
             properties: {
-              uuid: {
-                type: 'string',
-                description: 'UUID of the application to start. Obtain this from list_applications or from the create_application response.',
-                pattern: '^[a-zA-Z0-9]+$'
-              }
+              uuid: { type: 'string', description: 'Application UUID.' },
+              force: { type: 'boolean', default: false },
+              instant_deploy: { type: 'boolean', default: false }
             },
-            required: ['uuid'],
-            examples: [
-              {
-                uuid: 'sg4gsws44wksg040o4ok80ww'
-              }
-            ],
-            additionalInfo: {
-              workflow: [
-                '1. Get the application UUID from list_applications',
-                '2. Start the application',
-                '3. Monitor the application status'
-              ],
-              relatedTools: [
-                'list_applications - Get UUIDs of available applications',
-                'stop_application - Stop the application if needed',
-                'restart_application - Restart if issues occur',
-                'execute_command_application - Run commands for troubleshooting'
-              ]
-            }
+            required: ['uuid']
           }
         },
         {
           name: 'stop_application',
-          description: 'Stop a running application. This will gracefully shut down the application container.',
+          description: 'Stop a running application.',
           inputSchema: {
             type: 'object',
             properties: {
-              uuid: {
-                type: 'string',
-                description: 'UUID of the application to stop. Get this from list_applications.',
-                pattern: '^[a-zA-Z0-9]+$'
-              }
+              uuid: { type: 'string', description: 'Application UUID.' },
+              docker_cleanup: { type: 'boolean', default: true }
             },
-            required: ['uuid'],
-            examples: [
-              {
-                uuid: 'sg4gsws44wksg040o4ok80ww'
-              }
-            ],
-            additionalInfo: {
-              workflow: [
-                '1. Get the application UUID from list_applications',
-                '2. Stop the application',
-                '3. Verify the application has stopped'
-              ],
-              relatedTools: [
-                'list_applications - Get UUIDs of available applications',
-                'start_application - Restart the application when needed'
-              ],
-              notes: [
-                'Stopping an application will make it inaccessible',
-                'Application data persists unless explicitly removed',
-                'Use restart_application if you plan to start again immediately'
-              ]
-            }
+            required: ['uuid']
           }
         },
         {
           name: 'restart_application',
-          description: 'Restart an application by stopping and starting it again. Useful for applying configuration changes or recovering from issues.',
+          description: 'Restart an application.',
           inputSchema: {
             type: 'object',
-            properties: {
-              uuid: {
-                type: 'string',
-                description: 'UUID of the application to restart. Get this from list_applications.',
-                pattern: '^[a-zA-Z0-9]+$'
-              }
-            },
-            required: ['uuid'],
-            examples: [
-              {
-                uuid: 'sg4gsws44wksg040o4ok80ww'
-              }
-            ],
-            additionalInfo: {
-              workflow: [
-                '1. Get the application UUID from list_applications',
-                '2. Restart the application',
-                '3. Monitor the application status'
-              ],
-              relatedTools: [
-                'list_applications - Get UUIDs of available applications',
-                'start_application - Start the application if restart fails',
-                'stop_application - Stop the application if restart hangs',
-                'execute_command_application - Run commands to verify operation'
-              ],
-              notes: [
-                'Restart performs a graceful stop and start',
-                'Application will be briefly unavailable during restart',
-                'Useful for applying configuration changes',
-                'Monitor application after restart to ensure proper operation'
-              ]
-            }
-          }
-        },
-        {
-          name: 'execute_command_application',
-          description: 'Execute a command inside a running application container. Useful for debugging, maintenance, or running one-off tasks. Note: This endpoint may not be available in all Coolify versions.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              uuid: {
-                type: 'string',
-                description: 'UUID of the application where the command will be executed. Get this from list_applications.',
-                pattern: '^[a-zA-Z0-9]+$'
-              },
-              command: {
-                type: 'string',
-                description: 'The command to execute inside the container. This can be any valid shell command.',
-                examples: [
-                  'npm run migrations',
-                  'python manage.py collectstatic',
-                  'ls -la',
-                  'cat /var/log/app.log'
-                ]
-              }
-            },
-            required: ['uuid', 'command'],
-            examples: [
-              {
-                uuid: 'sg4gsws44wksg040o4ok80ww',
-                command: 'npm run migrations'
-              }
-            ],
-            additionalInfo: {
-              workflow: [
-                '1. Ensure the application is running (use start_application if needed)',
-                '2. Get the application UUID from list_applications',
-                '3. Execute the desired command',
-                '4. Check the command output in the response'
-              ],
-              relatedTools: [
-                'list_applications - Get UUIDs of available applications',
-                'start_application - Ensure application is running',
-                'restart_application - Restart if needed'
-              ],
-              notes: [
-                'The application must be running for commands to execute',
-                'Commands run in the application\'s container environment',
-                'Command execution is synchronous and will return the output',
-                'Use with caution as commands can modify the application state'
-              ]
-            }
+            properties: { uuid: { type: 'string', description: 'Application UUID.' } },
+            required: ['uuid']
           }
         },
         {
           name: 'get_application_logs',
-          description: 'Get application logs by UUID. Essential for debugging and monitoring application behavior, errors, and performance issues. Retrieve logs from running applications to troubleshoot deployment issues and monitor application health.',
+          description: 'Get application logs.',
           inputSchema: {
             type: 'object',
             properties: {
-              uuid: {
-                type: 'string',
-                description: 'UUID of the application to retrieve logs for. Get this from list_applications.',
-                pattern: '^[a-zA-Z0-9]+$',
-                examples: ['sg4gsws44wksg040o4ok80ww']
-              },
-              lines: {
-                type: 'number',
-                description: 'Number of lines to show from the end of the logs. Controls log volume for performance. Default is 100 lines.',
-                minimum: 1,
-                default: 100,
-                examples: [100, 500, 1000]
-              }
+              uuid: { type: 'string', description: 'Application UUID.' },
+              lines: { type: 'number', description: 'Number of log lines to return (default 100).', default: 100 }
             },
-            required: ['uuid'],
-            examples: [
-              {
-                uuid: 'sg4gsws44wksg040o4ok80ww'
-              },
-              {
-                uuid: 'sg4gsws44wksg040o4ok80ww',
-                lines: 500
-              }
-            ],
-            additionalInfo: {
-              responseFormat: 'Returns JSON object with "logs" field containing application log entries as a string',
-              usage: 'Essential for application debugging, error investigation, and monitoring application behavior',
-              workflow: [
-                '1. Get the application UUID from list_applications',
-                '2. Optionally specify number of log lines to retrieve (default 100)',
-                '3. Review logs for errors, warnings, or application behavior',
-                '4. Use with other tools for comprehensive troubleshooting'
-              ],
-              relatedTools: [
-                'list_applications - Get UUIDs of available applications',
-                'execute_command_application - Run debugging commands in the application',
-                'restart_application - Restart application if issues found in logs',
-                'get_deployment - Check deployment status if log errors relate to deployment'
-              ],
-              notes: [
-                'Logs are retrieved from the end (most recent entries first)',
-                'Large line counts may take longer to retrieve and display',
-                'Use this tool for debugging deployment issues, runtime errors, and monitoring',
-                'Logs show application stdout/stderr and container lifecycle events'
-              ]
-            }
+            required: ['uuid']
           }
         },
-        // Deployments
+        // Application Envs
         {
-          name: 'list_deployments',
-          description: 'List all deployments across your Coolify instance. Deployments represent the history of application and service deployments.',
+          name: 'list_application_envs',
+          description: 'List all environment variables for an application.',
           inputSchema: {
             type: 'object',
-            properties: {},
-            required: [],
-            examples: [{}],
-            additionalInfo: {
-              responseFormat: 'Returns an array of deployment objects containing deployment history, status, and related resource information',
-              usage: 'Use this to monitor deployment history and status across your applications and services',
-              notes: [
-                'Deployments are automatically created when applications or services are updated',
-                'Each deployment entry contains timestamps, status, and related resource information',
-                'Use get_deployment with a specific UUID to get detailed information about a deployment'
-              ]
-            }
+            properties: { uuid: { type: 'string', description: 'Application UUID.' } },
+            required: ['uuid']
           }
+        },
+        {
+          name: 'create_application_env',
+          description: 'Create an environment variable for an application.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Application UUID.' },
+              key: { type: 'string' },
+              value: { type: 'string' },
+              is_preview: { type: 'boolean', default: false },
+              is_literal: { type: 'boolean', default: false },
+              is_multiline: { type: 'boolean', default: false },
+              is_shown_once: { type: 'boolean', default: false }
+            },
+            required: ['uuid', 'key', 'value']
+          }
+        },
+        {
+          name: 'update_application_env',
+          description: 'Update an environment variable for an application.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Application UUID.' },
+              key: { type: 'string' },
+              value: { type: 'string' },
+              is_preview: { type: 'boolean' },
+              is_literal: { type: 'boolean' },
+              is_multiline: { type: 'boolean' },
+              is_shown_once: { type: 'boolean' }
+            },
+            required: ['uuid', 'key', 'value']
+          }
+        },
+        {
+          name: 'bulk_update_application_envs',
+          description: 'Bulk update environment variables for an application.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Application UUID.' },
+              data: {
+                type: 'array',
+                description: 'Array of env var objects with key, value, and optional flags.',
+                items: {
+                  type: 'object',
+                  properties: {
+                    key: { type: 'string' },
+                    value: { type: 'string' },
+                    is_preview: { type: 'boolean' },
+                    is_literal: { type: 'boolean' },
+                    is_multiline: { type: 'boolean' },
+                    is_shown_once: { type: 'boolean' }
+                  },
+                  required: ['key', 'value']
+                }
+              }
+            },
+            required: ['uuid', 'data']
+          }
+        },
+        {
+          name: 'delete_application_env',
+          description: 'Delete an environment variable from an application.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Application UUID.' },
+              env_uuid: { type: 'string', description: 'Environment variable UUID.' }
+            },
+            required: ['uuid', 'env_uuid']
+          }
+        },
+        // Application Storages
+        {
+          name: 'list_application_storages',
+          description: 'List all persistent and file storages for an application.',
+          inputSchema: {
+            type: 'object',
+            properties: { uuid: { type: 'string', description: 'Application UUID.' } },
+            required: ['uuid']
+          }
+        },
+        {
+          name: 'create_application_storage',
+          description: 'Create a storage for an application.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Application UUID.' },
+              type: { type: 'string', enum: ['persistent', 'file'], description: 'Storage type.' },
+              mount_path: { type: 'string', description: 'Container mount path.' },
+              name: { type: 'string' },
+              host_path: { type: 'string' },
+              content: { type: 'string' },
+              is_directory: { type: 'boolean' }
+            },
+            required: ['uuid', 'type', 'mount_path']
+          }
+        },
+        {
+          name: 'delete_application_storage',
+          description: 'Delete a storage from an application.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Application UUID.' },
+              storage_uuid: { type: 'string', description: 'Storage UUID.' }
+            },
+            required: ['uuid', 'storage_uuid']
+          }
+        },
+        // Application Scheduled Tasks
+        {
+          name: 'list_application_scheduled_tasks',
+          description: 'List all scheduled tasks for an application.',
+          inputSchema: {
+            type: 'object',
+            properties: { uuid: { type: 'string', description: 'Application UUID.' } },
+            required: ['uuid']
+          }
+        },
+        {
+          name: 'create_application_scheduled_task',
+          description: 'Create a scheduled task for an application.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Application UUID.' },
+              name: { type: 'string' },
+              command: { type: 'string' },
+              frequency: { type: 'string', description: 'Cron expression or keyword (hourly, daily, weekly, monthly).' },
+              container: { type: 'string' },
+              timeout: { type: 'number', default: 300 },
+              enabled: { type: 'boolean', default: true }
+            },
+            required: ['uuid', 'name', 'command', 'frequency']
+          }
+        },
+        {
+          name: 'delete_application_scheduled_task',
+          description: 'Delete a scheduled task from an application.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Application UUID.' },
+              task_uuid: { type: 'string', description: 'Scheduled task UUID.' }
+            },
+            required: ['uuid', 'task_uuid']
+          }
+        },
+
+        // ── Databases ─────────────────────────────────────────────────────────
+        {
+          name: 'list_databases',
+          description: 'List all databases.',
+          inputSchema: { type: 'object', properties: {}, required: [] }
+        },
+        {
+          name: 'get_database',
+          description: 'Get a database by UUID.',
+          inputSchema: {
+            type: 'object',
+            properties: { uuid: { type: 'string', description: 'Database UUID.' } },
+            required: ['uuid']
+          }
+        },
+        {
+          name: 'update_database',
+          description: 'Update a database by UUID.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Database UUID.' },
+              name: { type: 'string' },
+              description: { type: 'string' },
+              image: { type: 'string' },
+              is_public: { type: 'boolean' },
+              public_port: { type: 'number' }
+            },
+            required: ['uuid']
+          }
+        },
+        {
+          name: 'delete_database',
+          description: 'Delete a database by UUID.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Database UUID.' },
+              delete_configurations: { type: 'boolean', default: true },
+              delete_volumes: { type: 'boolean', default: true },
+              docker_cleanup: { type: 'boolean', default: true },
+              delete_connected_networks: { type: 'boolean', default: true }
+            },
+            required: ['uuid']
+          }
+        },
+        {
+          name: 'create_postgresql_database',
+          description: 'Create a PostgreSQL database.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              server_uuid: { type: 'string' },
+              project_uuid: { type: 'string' },
+              environment_name: { type: 'string' },
+              environment_uuid: { type: 'string' },
+              name: { type: 'string' },
+              description: { type: 'string' },
+              postgres_user: { type: 'string' },
+              postgres_password: { type: 'string' },
+              postgres_db: { type: 'string' },
+              image: { type: 'string' },
+              is_public: { type: 'boolean', default: false },
+              public_port: { type: 'number' },
+              instant_deploy: { type: 'boolean', default: false }
+            },
+            required: ['server_uuid', 'project_uuid']
+          }
+        },
+        {
+          name: 'create_mysql_database',
+          description: 'Create a MySQL database.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              server_uuid: { type: 'string' },
+              project_uuid: { type: 'string' },
+              environment_name: { type: 'string' },
+              environment_uuid: { type: 'string' },
+              name: { type: 'string' },
+              mysql_root_password: { type: 'string' },
+              mysql_user: { type: 'string' },
+              mysql_password: { type: 'string' },
+              mysql_database: { type: 'string' },
+              image: { type: 'string' },
+              is_public: { type: 'boolean', default: false },
+              instant_deploy: { type: 'boolean', default: false }
+            },
+            required: ['server_uuid', 'project_uuid']
+          }
+        },
+        {
+          name: 'create_mariadb_database',
+          description: 'Create a MariaDB database.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              server_uuid: { type: 'string' },
+              project_uuid: { type: 'string' },
+              environment_name: { type: 'string' },
+              environment_uuid: { type: 'string' },
+              name: { type: 'string' },
+              mariadb_root_password: { type: 'string' },
+              mariadb_user: { type: 'string' },
+              mariadb_password: { type: 'string' },
+              mariadb_database: { type: 'string' },
+              image: { type: 'string' },
+              is_public: { type: 'boolean', default: false },
+              instant_deploy: { type: 'boolean', default: false }
+            },
+            required: ['server_uuid', 'project_uuid']
+          }
+        },
+        {
+          name: 'create_mongodb_database',
+          description: 'Create a MongoDB database.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              server_uuid: { type: 'string' },
+              project_uuid: { type: 'string' },
+              environment_name: { type: 'string' },
+              environment_uuid: { type: 'string' },
+              name: { type: 'string' },
+              mongo_initdb_root_username: { type: 'string' },
+              mongo_initdb_root_password: { type: 'string' },
+              image: { type: 'string' },
+              is_public: { type: 'boolean', default: false },
+              instant_deploy: { type: 'boolean', default: false }
+            },
+            required: ['server_uuid', 'project_uuid']
+          }
+        },
+        {
+          name: 'create_redis_database',
+          description: 'Create a Redis database.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              server_uuid: { type: 'string' },
+              project_uuid: { type: 'string' },
+              environment_name: { type: 'string' },
+              environment_uuid: { type: 'string' },
+              name: { type: 'string' },
+              redis_password: { type: 'string' },
+              image: { type: 'string' },
+              is_public: { type: 'boolean', default: false },
+              instant_deploy: { type: 'boolean', default: false }
+            },
+            required: ['server_uuid', 'project_uuid']
+          }
+        },
+        {
+          name: 'create_keydb_database',
+          description: 'Create a KeyDB database.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              server_uuid: { type: 'string' },
+              project_uuid: { type: 'string' },
+              environment_name: { type: 'string' },
+              environment_uuid: { type: 'string' },
+              name: { type: 'string' },
+              keydb_password: { type: 'string' },
+              image: { type: 'string' },
+              is_public: { type: 'boolean', default: false },
+              instant_deploy: { type: 'boolean', default: false }
+            },
+            required: ['server_uuid', 'project_uuid']
+          }
+        },
+        {
+          name: 'create_dragonfly_database',
+          description: 'Create a DragonFly database.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              server_uuid: { type: 'string' },
+              project_uuid: { type: 'string' },
+              environment_name: { type: 'string' },
+              environment_uuid: { type: 'string' },
+              name: { type: 'string' },
+              dragonfly_password: { type: 'string' },
+              image: { type: 'string' },
+              is_public: { type: 'boolean', default: false },
+              instant_deploy: { type: 'boolean', default: false }
+            },
+            required: ['server_uuid', 'project_uuid']
+          }
+        },
+        {
+          name: 'create_clickhouse_database',
+          description: 'Create a Clickhouse database.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              server_uuid: { type: 'string' },
+              project_uuid: { type: 'string' },
+              environment_name: { type: 'string' },
+              environment_uuid: { type: 'string' },
+              name: { type: 'string' },
+              clickhouse_admin_user: { type: 'string' },
+              clickhouse_admin_password: { type: 'string' },
+              image: { type: 'string' },
+              is_public: { type: 'boolean', default: false },
+              instant_deploy: { type: 'boolean', default: false }
+            },
+            required: ['server_uuid', 'project_uuid']
+          }
+        },
+        {
+          name: 'start_database',
+          description: 'Start a database.',
+          inputSchema: {
+            type: 'object',
+            properties: { uuid: { type: 'string', description: 'Database UUID.' } },
+            required: ['uuid']
+          }
+        },
+        {
+          name: 'stop_database',
+          description: 'Stop a database.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Database UUID.' },
+              docker_cleanup: { type: 'boolean', default: true }
+            },
+            required: ['uuid']
+          }
+        },
+        {
+          name: 'restart_database',
+          description: 'Restart a database.',
+          inputSchema: {
+            type: 'object',
+            properties: { uuid: { type: 'string', description: 'Database UUID.' } },
+            required: ['uuid']
+          }
+        },
+        // Database Backups
+        {
+          name: 'get_database_backups',
+          description: 'Get backup configurations for a database.',
+          inputSchema: {
+            type: 'object',
+            properties: { uuid: { type: 'string', description: 'Database UUID.' } },
+            required: ['uuid']
+          }
+        },
+        {
+          name: 'create_database_backup',
+          description: 'Create a scheduled backup configuration for a database.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Database UUID.' },
+              frequency: { type: 'string', description: 'Cron expression or keyword (every_minute, hourly, daily, weekly, monthly, yearly).' },
+              enabled: { type: 'boolean', default: true },
+              save_s3: { type: 'boolean', default: false },
+              s3_storage_uuid: { type: 'string' },
+              dump_all: { type: 'boolean', default: false },
+              backup_now: { type: 'boolean', default: false }
+            },
+            required: ['uuid', 'frequency']
+          }
+        },
+        {
+          name: 'list_database_backup_executions',
+          description: 'List all executions for a backup configuration.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Database UUID.' },
+              scheduled_backup_uuid: { type: 'string', description: 'Scheduled backup UUID.' }
+            },
+            required: ['uuid', 'scheduled_backup_uuid']
+          }
+        },
+        // Database Envs
+        {
+          name: 'list_database_envs',
+          description: 'List environment variables for a database.',
+          inputSchema: {
+            type: 'object',
+            properties: { uuid: { type: 'string', description: 'Database UUID.' } },
+            required: ['uuid']
+          }
+        },
+        {
+          name: 'create_database_env',
+          description: 'Create an environment variable for a database.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Database UUID.' },
+              key: { type: 'string' },
+              value: { type: 'string' }
+            },
+            required: ['uuid', 'key', 'value']
+          }
+        },
+        {
+          name: 'delete_database_env',
+          description: 'Delete an environment variable from a database.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Database UUID.' },
+              env_uuid: { type: 'string', description: 'Environment variable UUID.' }
+            },
+            required: ['uuid', 'env_uuid']
+          }
+        },
+
+        // ── Services ──────────────────────────────────────────────────────────
+        {
+          name: 'list_services',
+          description: 'List all services.',
+          inputSchema: { type: 'object', properties: {}, required: [] }
+        },
+        {
+          name: 'get_service',
+          description: 'Get a service by UUID.',
+          inputSchema: {
+            type: 'object',
+            properties: { uuid: { type: 'string', description: 'Service UUID.' } },
+            required: ['uuid']
+          }
+        },
+        {
+          name: 'create_service',
+          description: 'Create a one-click or custom service. Provide either "type" for a predefined service or "docker_compose_raw" for a custom one.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              server_uuid: { type: 'string' },
+              project_uuid: { type: 'string' },
+              environment_name: { type: 'string' },
+              environment_uuid: { type: 'string' },
+              type: { type: 'string', description: 'One-click service type (e.g. gitea, plausible, actualbudget).' },
+              name: { type: 'string' },
+              description: { type: 'string' },
+              destination_uuid: { type: 'string' },
+              instant_deploy: { type: 'boolean', default: false },
+              docker_compose_raw: { type: 'string', description: 'Base64-encoded Docker Compose YAML for custom services.' }
+            },
+            required: ['server_uuid', 'project_uuid']
+          }
+        },
+        {
+          name: 'update_service',
+          description: 'Update a service by UUID.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Service UUID.' },
+              name: { type: 'string' },
+              description: { type: 'string' },
+              docker_compose_raw: { type: 'string' }
+            },
+            required: ['uuid']
+          }
+        },
+        {
+          name: 'delete_service',
+          description: 'Delete a service by UUID.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Service UUID.' },
+              delete_configurations: { type: 'boolean', default: true },
+              delete_volumes: { type: 'boolean', default: true },
+              docker_cleanup: { type: 'boolean', default: true },
+              delete_connected_networks: { type: 'boolean', default: true }
+            },
+            required: ['uuid']
+          }
+        },
+        {
+          name: 'start_service',
+          description: 'Start a service.',
+          inputSchema: {
+            type: 'object',
+            properties: { uuid: { type: 'string', description: 'Service UUID.' } },
+            required: ['uuid']
+          }
+        },
+        {
+          name: 'stop_service',
+          description: 'Stop a service.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Service UUID.' },
+              docker_cleanup: { type: 'boolean', default: true }
+            },
+            required: ['uuid']
+          }
+        },
+        {
+          name: 'restart_service',
+          description: 'Restart a service.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Service UUID.' },
+              latest: { type: 'boolean', description: 'Pull latest images before restart.', default: false }
+            },
+            required: ['uuid']
+          }
+        },
+        // Service Envs
+        {
+          name: 'list_service_envs',
+          description: 'List environment variables for a service.',
+          inputSchema: {
+            type: 'object',
+            properties: { uuid: { type: 'string', description: 'Service UUID.' } },
+            required: ['uuid']
+          }
+        },
+        {
+          name: 'create_service_env',
+          description: 'Create an environment variable for a service.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Service UUID.' },
+              key: { type: 'string' },
+              value: { type: 'string' }
+            },
+            required: ['uuid', 'key', 'value']
+          }
+        },
+        {
+          name: 'delete_service_env',
+          description: 'Delete an environment variable from a service.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Service UUID.' },
+              env_uuid: { type: 'string', description: 'Environment variable UUID.' }
+            },
+            required: ['uuid', 'env_uuid']
+          }
+        },
+        // Service Scheduled Tasks
+        {
+          name: 'list_service_scheduled_tasks',
+          description: 'List all scheduled tasks for a service.',
+          inputSchema: {
+            type: 'object',
+            properties: { uuid: { type: 'string', description: 'Service UUID.' } },
+            required: ['uuid']
+          }
+        },
+        {
+          name: 'create_service_scheduled_task',
+          description: 'Create a scheduled task for a service.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Service UUID.' },
+              name: { type: 'string' },
+              command: { type: 'string' },
+              frequency: { type: 'string' },
+              container: { type: 'string' },
+              timeout: { type: 'number', default: 300 },
+              enabled: { type: 'boolean', default: true }
+            },
+            required: ['uuid', 'name', 'command', 'frequency']
+          }
+        },
+        {
+          name: 'delete_service_scheduled_task',
+          description: 'Delete a scheduled task from a service.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string', description: 'Service UUID.' },
+              task_uuid: { type: 'string', description: 'Scheduled task UUID.' }
+            },
+            required: ['uuid', 'task_uuid']
+          }
+        },
+
+        // ── Deployments ───────────────────────────────────────────────────────
+        {
+          name: 'list_deployments',
+          description: 'List currently running deployments.',
+          inputSchema: { type: 'object', properties: {}, required: [] }
         },
         {
           name: 'get_deployment',
-          description: 'Get detailed information about a specific deployment. Use this to monitor deployment status and troubleshoot issues.',
+          description: 'Get a deployment by UUID.',
+          inputSchema: {
+            type: 'object',
+            properties: { uuid: { type: 'string', description: 'Deployment UUID.' } },
+            required: ['uuid']
+          }
+        },
+        {
+          name: 'cancel_deployment',
+          description: 'Cancel a running deployment by UUID.',
+          inputSchema: {
+            type: 'object',
+            properties: { uuid: { type: 'string', description: 'Deployment UUID.' } },
+            required: ['uuid']
+          }
+        },
+        {
+          name: 'list_deployments_by_application',
+          description: 'List deployments for a specific application.',
           inputSchema: {
             type: 'object',
             properties: {
-              uuid: {
-                type: 'string',
-                description: 'UUID of the deployment to retrieve. Obtain this from list_deployments or from deployment event responses.',
-                pattern: '^[a-zA-Z0-9]+$'
-              }
+              uuid: { type: 'string', description: 'Application UUID.' },
+              skip: { type: 'number', default: 0 },
+              take: { type: 'number', default: 10 }
             },
-            required: ['uuid'],
-            examples: [
-              {
-                uuid: 'sg4gsws44wksg040o4ok80ww'
-              }
-            ],
-            additionalInfo: {
-              workflow: [
-                '1. Get deployment UUID from list_deployments or deployment events',
-                '2. Retrieve deployment details',
-                '3. Check status and logs if needed'
-              ],
-              relatedTools: [
-                'list_deployments - Get list of all deployments',
-                'execute_command_application - Run commands to investigate deployment issues'
-              ],
-              notes: [
-                'Deployment details include status, timestamps, and resource information',
-                'Use this to track deployment progress and troubleshoot issues',
-                'Failed deployments will include error information'
-              ]
-            }
+            required: ['uuid']
           }
         },
-        // Private Keys
         {
-          name: 'list_private_keys',
-          description: 'List all SSH private keys stored in Coolify. These keys are used for server authentication and Git repository access.',
+          name: 'deploy_by_tag_or_uuid',
+          description: 'Trigger a deployment by tag or UUID. Supports force deploy and pull-request deployments.',
           inputSchema: {
             type: 'object',
-            properties: {},
-            required: [],
-            examples: [{}],
-            additionalInfo: {
-              responseFormat: 'Returns an array of private key objects containing UUIDs, names, and metadata',
-              usage: 'Use this to get private key UUIDs needed for server creation and Git repository access',
-              notes: [
-                'Private keys are used for SSH authentication with servers',
-                'Keys can also be used for accessing private Git repositories',
-                'The actual private key content is never returned, only metadata'
-              ]
-            }
+            properties: {
+              tag: { type: 'string', description: 'Comma-separated tag names to deploy.' },
+              uuid: { type: 'string', description: 'Comma-separated resource UUIDs to deploy.' },
+              force: { type: 'boolean', default: false },
+              pr: { type: 'number', description: 'Pull request ID for PR deployments.' },
+              docker_tag: { type: 'string', description: 'Docker image tag to deploy.' }
+            },
+            required: []
+          }
+        },
+
+        // ── Private Keys ──────────────────────────────────────────────────────
+        {
+          name: 'list_private_keys',
+          description: 'List all SSH private keys.',
+          inputSchema: { type: 'object', properties: {}, required: [] }
+        },
+        {
+          name: 'get_private_key',
+          description: 'Get a private key by UUID.',
+          inputSchema: {
+            type: 'object',
+            properties: { uuid: { type: 'string', description: 'Private key UUID.' } },
+            required: ['uuid']
           }
         },
         {
           name: 'create_private_key',
-          description: 'Create a new SSH private key in Coolify for server authentication or Git repository access.',
+          description: 'Create a new SSH private key.',
           inputSchema: {
             type: 'object',
             properties: {
-              name: { 
-                type: 'string',
-                description: 'A unique, human-readable name for the private key',
-                examples: ['production-server-key', 'github-deploy-key']
-              },
-              description: { 
-                type: 'string',
-                description: 'Optional description of the key\'s purpose or usage',
-                examples: ['SSH key for production server access', 'Deploy key for GitHub repositories']
-              },
-              private_key: { 
-                type: 'string',
-                description: 'The SSH private key content in PEM format. Must be a valid SSH private key.',
-                examples: ['-----BEGIN RSA PRIVATE KEY-----\n...key content...\n-----END RSA PRIVATE KEY-----']
-              }
+              name: { type: 'string' },
+              description: { type: 'string' },
+              private_key: { type: 'string', description: 'PEM-formatted private key content.' }
             },
-            required: ['name', 'private_key'],
-            examples: [
-              {
-                name: 'production-server-key',
-                description: 'SSH key for production server access',
-                private_key: '-----BEGIN RSA PRIVATE KEY-----\n...key content...\n-----END RSA PRIVATE KEY-----'
-              }
-            ],
-            additionalInfo: {
-              workflow: [
-                '1. Generate an SSH key pair on your local machine',
-                '2. Store the private key in Coolify using this tool',
-                '3. Use the public key on your servers or Git repositories',
-                '4. Use the private key UUID when creating servers or applications'
-              ],
-              relatedTools: [
-                'create_server - Create servers using this private key',
-                'create_application - Create applications that need Git repository access'
-              ],
-              notes: [
-                'Private keys should be properly formatted and include headers',
-                'Never share private keys or commit them to version control',
-                'The private key will be encrypted before storage',
-                'You can use the same key for multiple servers if desired'
-              ]
-            }
+            required: ['private_key']
           }
-        }
+        },
+        {
+          name: 'update_private_key',
+          description: 'Update an existing private key.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              description: { type: 'string' },
+              private_key: { type: 'string' }
+            },
+            required: ['private_key']
+          }
+        },
+        {
+          name: 'delete_private_key',
+          description: 'Delete a private key by UUID.',
+          inputSchema: {
+            type: 'object',
+            properties: { uuid: { type: 'string', description: 'Private key UUID.' } },
+            required: ['uuid']
+          }
+        },
+
+        // ── GitHub Apps ───────────────────────────────────────────────────────
+        {
+          name: 'list_github_apps',
+          description: 'List all configured GitHub Apps.',
+          inputSchema: { type: 'object', properties: {}, required: [] }
+        },
+        {
+          name: 'create_github_app',
+          description: 'Create a new GitHub App integration.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              api_url: { type: 'string' },
+              html_url: { type: 'string' },
+              app_id: { type: 'number' },
+              installation_id: { type: 'number' },
+              client_id: { type: 'string' },
+              client_secret: { type: 'string' },
+              private_key_uuid: { type: 'string' },
+              organization: { type: 'string' },
+              webhook_secret: { type: 'string' },
+              is_system_wide: { type: 'boolean', default: false }
+            },
+            required: ['name', 'api_url', 'html_url', 'app_id', 'installation_id', 'client_id', 'client_secret', 'private_key_uuid']
+          }
+        },
+        {
+          name: 'delete_github_app',
+          description: 'Delete a GitHub App (only if not used by any applications).',
+          inputSchema: {
+            type: 'object',
+            properties: { github_app_id: { type: 'number', description: 'GitHub App numeric ID.' } },
+            required: ['github_app_id']
+          }
+        },
+        {
+          name: 'list_github_app_repositories',
+          description: 'List repositories accessible to a GitHub App.',
+          inputSchema: {
+            type: 'object',
+            properties: { github_app_id: { type: 'number', description: 'GitHub App numeric ID.' } },
+            required: ['github_app_id']
+          }
+        },
+
+        // ── Cloud Tokens ──────────────────────────────────────────────────────
+        {
+          name: 'list_cloud_tokens',
+          description: 'List all cloud provider tokens (Hetzner, DigitalOcean, etc.).',
+          inputSchema: { type: 'object', properties: {}, required: [] }
+        },
+        {
+          name: 'create_cloud_token',
+          description: 'Create and validate a new cloud provider token.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              provider: { type: 'string', enum: ['hetzner', 'digitalocean'], description: 'Cloud provider.' },
+              token: { type: 'string', description: 'API token for the cloud provider.' },
+              name: { type: 'string', description: 'Human-readable name for this token.' }
+            },
+            required: ['provider', 'token', 'name']
+          }
+        },
+        {
+          name: 'delete_cloud_token',
+          description: 'Delete a cloud provider token. Fails if used by any servers.',
+          inputSchema: {
+            type: 'object',
+            properties: { uuid: { type: 'string', description: 'Cloud token UUID.' } },
+            required: ['uuid']
+          }
+        },
+
+        // ── Hetzner ───────────────────────────────────────────────────────────
+        {
+          name: 'get_hetzner_locations',
+          description: 'Get all available Hetzner datacenter locations.',
+          inputSchema: {
+            type: 'object',
+            properties: { cloud_provider_token_uuid: { type: 'string', description: 'Cloud token UUID.' } },
+            required: ['cloud_provider_token_uuid']
+          }
+        },
+        {
+          name: 'get_hetzner_server_types',
+          description: 'Get all available Hetzner server types and pricing.',
+          inputSchema: {
+            type: 'object',
+            properties: { cloud_provider_token_uuid: { type: 'string', description: 'Cloud token UUID.' } },
+            required: ['cloud_provider_token_uuid']
+          }
+        },
+        {
+          name: 'get_hetzner_images',
+          description: 'Get all available Hetzner OS images.',
+          inputSchema: {
+            type: 'object',
+            properties: { cloud_provider_token_uuid: { type: 'string', description: 'Cloud token UUID.' } },
+            required: ['cloud_provider_token_uuid']
+          }
+        },
+        {
+          name: 'get_hetzner_ssh_keys',
+          description: 'Get all SSH keys stored in a Hetzner account.',
+          inputSchema: {
+            type: 'object',
+            properties: { cloud_provider_token_uuid: { type: 'string', description: 'Cloud token UUID.' } },
+            required: ['cloud_provider_token_uuid']
+          }
+        },
+
+        // ── Resources ─────────────────────────────────────────────────────────
+        {
+          name: 'list_resources',
+          description: 'Get all resources (applications, databases, services) across the Coolify instance.',
+          inputSchema: { type: 'object', properties: {}, required: [] }
+        },
       ]
     }));
 
@@ -1202,325 +1454,601 @@ class CoolifyServer {
       if (!this.axiosInstance) {
         throw new McpError(
           ErrorCode.InvalidRequest,
-          'Coolify configuration not initialized. Please set COOLIFY_BASE_URL and COOLIFY_TOKEN environment variables.'
+          'Coolify not configured. Set COOLIFY_BASE_URL and COOLIFY_TOKEN environment variables.'
         );
       }
 
+      const args = request.params.arguments ?? {};
+
       try {
         switch (request.params.name) {
-          // Version & Health
-          case 'get_version':
-            const versionResponse = await this.axiosInstance.get('/version');
-            return {
-              content: [{ type: 'text', text: JSON.stringify(versionResponse.data, null, 2) }]
-            };
 
-          case 'health_check':
-            // Check if health endpoint is available in this version
-            if (!this.isFeatureAvailable('health_check')) {
-              return {
-                content: [{ 
-                  type: 'text', 
-                  text: `Health check endpoint not available in Coolify ${this.coolifyVersion?.version || 'this version'}.`
-                }]
-              };
-            }
-            
-            try {
-              const healthResponse = await this.axiosInstance.get('/healthcheck');
-              return {
-                content: [{ type: 'text', text: JSON.stringify(healthResponse.data, null, 2) }]
-              };
-            } catch (error) {
-              // Instead of throwing an error, return a message
-              if (axios.isAxiosError(error) && error.response?.status === 404) {
-                return {
-                  content: [{ 
-                    type: 'text', 
-                    text: `Health check endpoint not available in Coolify ${this.coolifyVersion?.version || 'this version'}.`
-                  }]
-                };
-              } else {
-                // For other errors, provide more details
-                return {
-                  content: [{ 
-                    type: 'text', 
-                    text: "Error checking Coolify health: " + 
-                          (axios.isAxiosError(error) ? error.response?.data?.message || error.message : 'Unknown error')
-                  }]
-                };
-              }
-            }
+          // ── General ────────────────────────────────────────────────────────
+          case 'get_version': {
+            const r = await this.axiosInstance.get('/version');
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'health_check': {
+            const r = await this.axiosInstance.get('/health');
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'enable_api': {
+            const r = await this.axiosInstance.get('/enable');
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'disable_api': {
+            const r = await this.axiosInstance.get('/disable');
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'enable_mcp': {
+            const r = await this.axiosInstance.post('/mcp/enable');
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'disable_mcp': {
+            const r = await this.axiosInstance.post('/mcp/disable');
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
 
-          // Teams
-          case 'list_teams':
-            const teamsResponse = await this.axiosInstance.get('/teams');
-            return {
-              content: [{ type: 'text', text: JSON.stringify(teamsResponse.data, null, 2) }]
-            };
+          // ── Teams ──────────────────────────────────────────────────────────
+          case 'list_teams': {
+            const r = await this.axiosInstance.get('/teams');
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'get_team': {
+            if (!args.team_id) throw new McpError(ErrorCode.InvalidParams, 'team_id is required');
+            const r = await this.axiosInstance.get(`/teams/${args.team_id}`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'get_team_members': {
+            if (!args.team_id) throw new McpError(ErrorCode.InvalidParams, 'team_id is required');
+            const r = await this.axiosInstance.get(`/teams/${args.team_id}/members`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'get_current_team': {
+            const r = await this.axiosInstance.get('/teams/current');
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'get_current_team_members': {
+            const r = await this.axiosInstance.get('/teams/current/members');
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
 
-          case 'get_team':
-            const teamId = request.params.arguments?.team_id;
-            if (!teamId) {
-              throw new McpError(ErrorCode.InvalidParams, 'team_id is required');
-            }
-            const teamResponse = await this.axiosInstance.get(`/teams/${teamId}`);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(teamResponse.data, null, 2) }]
-            };
+          // ── Servers ────────────────────────────────────────────────────────
+          case 'list_servers': {
+            const r = await this.axiosInstance.get('/servers');
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'get_server': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.get(`/servers/${args.uuid}`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_server': {
+            const r = await this.axiosInstance.post('/servers', args);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'update_server': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const { uuid: suuid, ...serverPatch } = args as Record<string, unknown>;
+            const r = await this.axiosInstance.patch(`/servers/${suuid}`, serverPatch);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'delete_server': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.delete(`/servers/${args.uuid}`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'validate_server': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.get(`/servers/${args.uuid}/validate`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'get_server_resources': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.get(`/servers/${args.uuid}/resources`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'get_server_domains': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.get(`/servers/${args.uuid}/domains`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_hetzner_server': {
+            const r = await this.axiosInstance.post('/servers/hetzner', args);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
 
-          case 'get_current_team':
-            const currentTeamResponse = await this.axiosInstance.get('/teams/current');
-            return {
-              content: [{ type: 'text', text: JSON.stringify(currentTeamResponse.data, null, 2) }]
-            };
+          // ── Projects ───────────────────────────────────────────────────────
+          case 'list_projects': {
+            const r = await this.axiosInstance.get('/projects');
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'get_project': {
+            if (!args.project_uuid) throw new McpError(ErrorCode.InvalidParams, 'project_uuid is required');
+            const r = await this.axiosInstance.get(`/projects/${args.project_uuid}`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_project': {
+            const r = await this.axiosInstance.post('/projects', args);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'update_project': {
+            if (!args.project_uuid) throw new McpError(ErrorCode.InvalidParams, 'project_uuid is required');
+            const { project_uuid: puuid, ...projectPatch } = args as Record<string, unknown>;
+            const r = await this.axiosInstance.patch(`/projects/${puuid}`, projectPatch);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'delete_project': {
+            if (!args.project_uuid) throw new McpError(ErrorCode.InvalidParams, 'project_uuid is required');
+            const r = await this.axiosInstance.delete(`/projects/${args.project_uuid}`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
 
-          case 'get_current_team_members':
-            const currentTeamMembersResponse = await this.axiosInstance.get('/teams/current/members');
-            return {
-              content: [{ type: 'text', text: JSON.stringify(currentTeamMembersResponse.data, null, 2) }]
-            };
+          // ── Environments ───────────────────────────────────────────────────
+          case 'list_environments': {
+            if (!args.project_uuid) throw new McpError(ErrorCode.InvalidParams, 'project_uuid is required');
+            const r = await this.axiosInstance.get(`/projects/${args.project_uuid}/environments`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'get_environment': {
+            if (!args.project_uuid) throw new McpError(ErrorCode.InvalidParams, 'project_uuid is required');
+            if (!args.environment_name_or_uuid) throw new McpError(ErrorCode.InvalidParams, 'environment_name_or_uuid is required');
+            const r = await this.axiosInstance.get(`/projects/${args.project_uuid}/${args.environment_name_or_uuid}`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_environment': {
+            if (!args.project_uuid) throw new McpError(ErrorCode.InvalidParams, 'project_uuid is required');
+            const { project_uuid: epuuid, ...envBody } = args as Record<string, unknown>;
+            const r = await this.axiosInstance.post(`/projects/${epuuid}/environments`, envBody);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'delete_environment': {
+            if (!args.project_uuid) throw new McpError(ErrorCode.InvalidParams, 'project_uuid is required');
+            if (!args.environment_name_or_uuid) throw new McpError(ErrorCode.InvalidParams, 'environment_name_or_uuid is required');
+            const r = await this.axiosInstance.delete(`/projects/${args.project_uuid}/environments/${args.environment_name_or_uuid}`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
 
-          // Servers
-          case 'list_servers':
-            const serversResponse = await this.axiosInstance.get('/servers');
-            return {
-              content: [{ type: 'text', text: JSON.stringify(serversResponse.data, null, 2) }]
-            };
+          // ── Applications ───────────────────────────────────────────────────
+          case 'list_applications': {
+            const r = await this.axiosInstance.get('/applications', { params: args.tag ? { tag: args.tag } : {} });
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'get_application': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.get(`/applications/${args.uuid}`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_public_application': {
+            const r = await this.axiosInstance.post('/applications/public', args);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_private_github_app_application': {
+            const r = await this.axiosInstance.post('/applications/private-github-app', args);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_private_deploy_key_application': {
+            const r = await this.axiosInstance.post('/applications/private-deploy-key', args);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_dockerfile_application': {
+            const r = await this.axiosInstance.post('/applications/dockerfile', args);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_dockerimage_application': {
+            const r = await this.axiosInstance.post('/applications/dockerimage', args);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_dockercompose_application': {
+            const r = await this.axiosInstance.post('/applications/dockercompose', args);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'update_application': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const { uuid: auuid, ...appPatch } = args as Record<string, unknown>;
+            const r = await this.axiosInstance.patch(`/applications/${auuid}`, appPatch);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'delete_application': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const { uuid: dauuid, ...deleteParams } = args as Record<string, unknown>;
+            const r = await this.axiosInstance.delete(`/applications/${dauuid}`, { params: deleteParams });
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'start_application': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const { uuid: sauuid, ...startParams } = args as Record<string, unknown>;
+            const r = await this.axiosInstance.get(`/applications/${sauuid}/start`, { params: startParams });
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'stop_application': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const { uuid: stauuid, ...stopParams } = args as Record<string, unknown>;
+            const r = await this.axiosInstance.get(`/applications/${stauuid}/stop`, { params: stopParams });
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'restart_application': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.get(`/applications/${args.uuid}/restart`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'get_application_logs': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.get(`/applications/${args.uuid}/logs`, { params: { lines: args.lines ?? 100 } });
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          // Application Envs
+          case 'list_application_envs': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.get(`/applications/${args.uuid}/envs`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_application_env': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const { uuid: aeuuid, ...envBody } = args as Record<string, unknown>;
+            const r = await this.axiosInstance.post(`/applications/${aeuuid}/envs`, envBody);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'update_application_env': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const { uuid: uaeuuid, ...envPatch } = args as Record<string, unknown>;
+            const r = await this.axiosInstance.patch(`/applications/${uaeuuid}/envs`, envPatch);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'bulk_update_application_envs': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const { uuid: buuid, data } = args as Record<string, unknown>;
+            const r = await this.axiosInstance.patch(`/applications/${buuid}/envs/bulk`, { data });
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'delete_application_env': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            if (!args.env_uuid) throw new McpError(ErrorCode.InvalidParams, 'env_uuid is required');
+            const r = await this.axiosInstance.delete(`/applications/${args.uuid}/envs/${args.env_uuid}`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          // Application Storages
+          case 'list_application_storages': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.get(`/applications/${args.uuid}/storages`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_application_storage': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const { uuid: astuuid, ...storageBody } = args as Record<string, unknown>;
+            const r = await this.axiosInstance.post(`/applications/${astuuid}/storages`, storageBody);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'delete_application_storage': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            if (!args.storage_uuid) throw new McpError(ErrorCode.InvalidParams, 'storage_uuid is required');
+            const r = await this.axiosInstance.delete(`/applications/${args.uuid}/storages/${args.storage_uuid}`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          // Application Scheduled Tasks
+          case 'list_application_scheduled_tasks': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.get(`/applications/${args.uuid}/scheduled-tasks`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_application_scheduled_task': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const { uuid: atsuuid, ...taskBody } = args as Record<string, unknown>;
+            const r = await this.axiosInstance.post(`/applications/${atsuuid}/scheduled-tasks`, taskBody);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'delete_application_scheduled_task': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            if (!args.task_uuid) throw new McpError(ErrorCode.InvalidParams, 'task_uuid is required');
+            const r = await this.axiosInstance.delete(`/applications/${args.uuid}/scheduled-tasks/${args.task_uuid}`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
 
-          case 'create_server':
-            const createServerResponse = await this.axiosInstance.post('/servers', request.params.arguments);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(createServerResponse.data, null, 2) }]
-            };
+          // ── Databases ──────────────────────────────────────────────────────
+          case 'list_databases': {
+            const r = await this.axiosInstance.get('/databases');
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'get_database': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.get(`/databases/${args.uuid}`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'update_database': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const { uuid: dbuuid, ...dbPatch } = args as Record<string, unknown>;
+            const r = await this.axiosInstance.patch(`/databases/${dbuuid}`, dbPatch);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'delete_database': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const { uuid: deldbuuid, ...dbDeleteParams } = args as Record<string, unknown>;
+            const r = await this.axiosInstance.delete(`/databases/${deldbuuid}`, { params: dbDeleteParams });
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_postgresql_database': {
+            const r = await this.axiosInstance.post('/databases/postgresql', args);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_mysql_database': {
+            const r = await this.axiosInstance.post('/databases/mysql', args);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_mariadb_database': {
+            const r = await this.axiosInstance.post('/databases/mariadb', args);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_mongodb_database': {
+            const r = await this.axiosInstance.post('/databases/mongodb', args);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_redis_database': {
+            const r = await this.axiosInstance.post('/databases/redis', args);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_keydb_database': {
+            const r = await this.axiosInstance.post('/databases/keydb', args);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_dragonfly_database': {
+            const r = await this.axiosInstance.post('/databases/dragonfly', args);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_clickhouse_database': {
+            const r = await this.axiosInstance.post('/databases/clickhouse', args);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'start_database': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.get(`/databases/${args.uuid}/start`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'stop_database': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const { uuid: stopdbuuid, ...stopDbParams } = args as Record<string, unknown>;
+            const r = await this.axiosInstance.get(`/databases/${stopdbuuid}/stop`, { params: stopDbParams });
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'restart_database': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.get(`/databases/${args.uuid}/restart`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          // Database Backups
+          case 'get_database_backups': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.get(`/databases/${args.uuid}/backups`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_database_backup': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const { uuid: bkuuid, ...backupBody } = args as Record<string, unknown>;
+            const r = await this.axiosInstance.post(`/databases/${bkuuid}/backups`, backupBody);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'list_database_backup_executions': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            if (!args.scheduled_backup_uuid) throw new McpError(ErrorCode.InvalidParams, 'scheduled_backup_uuid is required');
+            const r = await this.axiosInstance.get(`/databases/${args.uuid}/backups/${args.scheduled_backup_uuid}/executions`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          // Database Envs
+          case 'list_database_envs': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.get(`/databases/${args.uuid}/envs`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_database_env': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const { uuid: dbenvuuid, ...dbEnvBody } = args as Record<string, unknown>;
+            const r = await this.axiosInstance.post(`/databases/${dbenvuuid}/envs`, dbEnvBody);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'delete_database_env': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            if (!args.env_uuid) throw new McpError(ErrorCode.InvalidParams, 'env_uuid is required');
+            const r = await this.axiosInstance.delete(`/databases/${args.uuid}/envs/${args.env_uuid}`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
 
-          case 'validate_server':
-            const validateServerResponse = await this.axiosInstance.get(`/servers/${request.params.arguments?.uuid}/validate`);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(validateServerResponse.data, null, 2) }]
-            };
+          // ── Services ───────────────────────────────────────────────────────
+          case 'list_services': {
+            const r = await this.axiosInstance.get('/services');
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'get_service': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.get(`/services/${args.uuid}`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_service': {
+            const r = await this.axiosInstance.post('/services', args);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'update_service': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const { uuid: svuuid, ...svPatch } = args as Record<string, unknown>;
+            const r = await this.axiosInstance.patch(`/services/${svuuid}`, svPatch);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'delete_service': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const { uuid: delsvuuid, ...svDeleteParams } = args as Record<string, unknown>;
+            const r = await this.axiosInstance.delete(`/services/${delsvuuid}`, { params: svDeleteParams });
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'start_service': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.get(`/services/${args.uuid}/start`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'stop_service': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const { uuid: stsvuuid, ...stopSvParams } = args as Record<string, unknown>;
+            const r = await this.axiosInstance.get(`/services/${stsvuuid}/stop`, { params: stopSvParams });
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'restart_service': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const { uuid: rsvuuid, ...restartSvParams } = args as Record<string, unknown>;
+            const r = await this.axiosInstance.get(`/services/${rsvuuid}/restart`, { params: restartSvParams });
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          // Service Envs
+          case 'list_service_envs': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.get(`/services/${args.uuid}/envs`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_service_env': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const { uuid: svenvuuid, ...svEnvBody } = args as Record<string, unknown>;
+            const r = await this.axiosInstance.post(`/services/${svenvuuid}/envs`, svEnvBody);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'delete_service_env': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            if (!args.env_uuid) throw new McpError(ErrorCode.InvalidParams, 'env_uuid is required');
+            const r = await this.axiosInstance.delete(`/services/${args.uuid}/envs/${args.env_uuid}`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          // Service Scheduled Tasks
+          case 'list_service_scheduled_tasks': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.get(`/services/${args.uuid}/scheduled-tasks`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_service_scheduled_task': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const { uuid: ststuuid, ...stBody } = args as Record<string, unknown>;
+            const r = await this.axiosInstance.post(`/services/${ststuuid}/scheduled-tasks`, stBody);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'delete_service_scheduled_task': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            if (!args.task_uuid) throw new McpError(ErrorCode.InvalidParams, 'task_uuid is required');
+            const r = await this.axiosInstance.delete(`/services/${args.uuid}/scheduled-tasks/${args.task_uuid}`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
 
-          case 'get_server_resources':
-            const serverResourcesResponse = await this.axiosInstance.get(`/servers/${request.params.arguments?.uuid}/resources`);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(serverResourcesResponse.data, null, 2) }]
-            };
+          // ── Deployments ────────────────────────────────────────────────────
+          case 'list_deployments': {
+            const r = await this.axiosInstance.get('/deployments');
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'get_deployment': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.get(`/deployments/${args.uuid}`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'cancel_deployment': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.post(`/deployments/${args.uuid}/cancel`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'list_deployments_by_application': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const { uuid: appDeployUuid, ...deployParams } = args as Record<string, unknown>;
+            const r = await this.axiosInstance.get(`/deployments/applications/${appDeployUuid}`, { params: deployParams });
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'deploy_by_tag_or_uuid': {
+            const r = await this.axiosInstance.get('/deploy', { params: args });
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
 
-          case 'get_server_domains':
-            const serverDomainsResponse = await this.axiosInstance.get(`/servers/${request.params.arguments?.uuid}/domains`);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(serverDomainsResponse.data, null, 2) }]
-            };
+          // ── Private Keys ───────────────────────────────────────────────────
+          case 'list_private_keys': {
+            const r = await this.axiosInstance.get('/security/keys');
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'get_private_key': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.get(`/security/keys/${args.uuid}`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_private_key': {
+            const r = await this.axiosInstance.post('/security/keys', args);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'update_private_key': {
+            const r = await this.axiosInstance.patch('/security/keys', args);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'delete_private_key': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.delete(`/security/keys/${args.uuid}`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
 
-          // Projects
-          case 'list_projects':
-            const projectsResponse = await this.axiosInstance.get('/projects');
-            return {
-              content: [{ type: 'text', text: JSON.stringify(projectsResponse.data, null, 2) }]
-            };
+          // ── GitHub Apps ────────────────────────────────────────────────────
+          case 'list_github_apps': {
+            const r = await this.axiosInstance.get('/github-apps');
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_github_app': {
+            const r = await this.axiosInstance.post('/github-apps', args);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'delete_github_app': {
+            if (args.github_app_id === undefined) throw new McpError(ErrorCode.InvalidParams, 'github_app_id is required');
+            const r = await this.axiosInstance.delete(`/github-apps/${args.github_app_id}`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'list_github_app_repositories': {
+            if (args.github_app_id === undefined) throw new McpError(ErrorCode.InvalidParams, 'github_app_id is required');
+            const r = await this.axiosInstance.get(`/github-apps/${args.github_app_id}/repositories`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
 
-          case 'get_project':
-            const projectUuid = request.params.arguments?.project_uuid;
-            if (!projectUuid) {
-              throw new McpError(ErrorCode.InvalidParams, 'project_uuid is required');
-            }
-            const projectResponse = await this.axiosInstance.get(`/projects/${projectUuid}`);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(projectResponse.data, null, 2) }]
-            };
+          // ── Cloud Tokens ───────────────────────────────────────────────────
+          case 'list_cloud_tokens': {
+            const r = await this.axiosInstance.get('/cloud-tokens');
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'create_cloud_token': {
+            const r = await this.axiosInstance.post('/cloud-tokens', args);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'delete_cloud_token': {
+            if (!args.uuid) throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
+            const r = await this.axiosInstance.delete(`/cloud-tokens/${args.uuid}`);
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
 
-          case 'create_project':
-            const createProjectResponse = await this.axiosInstance.post('/projects', request.params.arguments);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(createProjectResponse.data, null, 2) }]
-            };
+          // ── Hetzner ────────────────────────────────────────────────────────
+          case 'get_hetzner_locations': {
+            const r = await this.axiosInstance.get('/hetzner/locations', { params: { cloud_provider_token_uuid: args.cloud_provider_token_uuid } });
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'get_hetzner_server_types': {
+            const r = await this.axiosInstance.get('/hetzner/server-types', { params: { cloud_provider_token_uuid: args.cloud_provider_token_uuid } });
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'get_hetzner_images': {
+            const r = await this.axiosInstance.get('/hetzner/images', { params: { cloud_provider_token_uuid: args.cloud_provider_token_uuid } });
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
+          case 'get_hetzner_ssh_keys': {
+            const r = await this.axiosInstance.get('/hetzner/ssh-keys', { params: { cloud_provider_token_uuid: args.cloud_provider_token_uuid } });
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
 
-          // Environments
-          case 'list_environments':
-            const envProjectUuid = request.params.arguments?.project_uuid;
-            if (!envProjectUuid) {
-              throw new McpError(ErrorCode.InvalidParams, 'project_uuid is required');
-            }
-            const environmentsResponse = await this.axiosInstance.get(`/projects/${envProjectUuid}/environments`);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(environmentsResponse.data, null, 2) }]
-            };
-
-          case 'create_environment':
-            const createEnvironmentResponse = await this.axiosInstance.post('/environments', request.params.arguments);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(createEnvironmentResponse.data, null, 2) }]
-            };
-
-          // Services
-          case 'list_services':
-            const servicesResponse = await this.axiosInstance.get('/services');
-            return {
-              content: [{ type: 'text', text: JSON.stringify(servicesResponse.data, null, 2) }]
-            };
-
-          case 'create_service':
-            try {
-              const createServiceResponse = await this.axiosInstance.post('/services', request.params.arguments);
-              return {
-                content: [{ type: 'text', text: JSON.stringify(createServiceResponse.data, null, 2) }]
-              };
-            } catch (error) {
-              if (axios.isAxiosError(error) && error.response) {
-                const errorDetail = {
-                  status: error.response.status,
-                  statusText: error.response.statusText,
-                  data: error.response.data,
-                  requestUrl: error.config?.url,
-                  requestMethod: error.config?.method,
-                  requestData: request.params.arguments
-                };
-                return {
-                  content: [{ type: 'text', text: `Service creation failed with detailed error:\n${JSON.stringify(errorDetail, null, 2)}` }]
-                };
-              }
-              throw error;
-            }
-
-          case 'start_service':
-            const startServiceResponse = await this.axiosInstance.get(`/services/${request.params.arguments?.uuid}/start`);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(startServiceResponse.data, null, 2) }]
-            };
-
-          case 'stop_service':
-            const stopServiceResponse = await this.axiosInstance.get(`/services/${request.params.arguments?.uuid}/stop`);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(stopServiceResponse.data, null, 2) }]
-            };
-
-          case 'restart_service':
-            const restartServiceResponse = await this.axiosInstance.get(`/services/${request.params.arguments?.uuid}/restart`);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(restartServiceResponse.data, null, 2) }]
-            };
-
-          // Applications
-          case 'list_applications':
-            const applicationsResponse = await this.axiosInstance.get('/resources');
-            return {
-              content: [{ type: 'text', text: JSON.stringify(applicationsResponse.data, null, 2) }]
-            };
-
-          case 'create_application':
-            const createApplicationResponse = await this.axiosInstance.post('/applications', request.params.arguments);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(createApplicationResponse.data, null, 2) }]
-            };
-
-          case 'start_application':
-            const startAppResponse = await this.axiosInstance.get(`/applications/${request.params.arguments?.uuid}/start`);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(startAppResponse.data, null, 2) }]
-            };
-
-          case 'stop_application':
-            const stopAppResponse = await this.axiosInstance.get(`/applications/${request.params.arguments?.uuid}/stop`);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(stopAppResponse.data, null, 2) }]
-            };
-
-          case 'restart_application':
-            const restartAppResponse = await this.axiosInstance.get(`/applications/${request.params.arguments?.uuid}/restart`);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(restartAppResponse.data, null, 2) }]
-            };
-
-          case 'execute_command_application':
-            // Check if execute command endpoint is available in this version
-            if (!this.isFeatureAvailable('execute_command')) {
-              return {
-                content: [{ 
-                  type: 'text', 
-                  text: `Execute command endpoint not available in Coolify ${this.coolifyVersion?.version || 'this version'}. This feature requires Coolify v4.0.0-beta.400 or later.`
-                }]
-              };
-            }
-            
-            try {
-              const executeResponse = await this.axiosInstance.post(
-                `/applications/${request.params.arguments?.uuid}/execute`,
-                { command: request.params.arguments?.command }
-              );
-              return {
-                content: [{ type: 'text', text: JSON.stringify(executeResponse.data, null, 2) }]
-              };
-            } catch (error) {
-              // Instead of throwing an error, return a message
-              if (axios.isAxiosError(error) && error.response?.status === 404) {
-                return {
-                  content: [{ 
-                    type: 'text', 
-                    text: `Execute command endpoint not available in Coolify ${this.coolifyVersion?.version || 'this version'} or the application UUID is invalid.`
-                  }]
-                };
-              } else {
-                // For other errors, provide more details
-                return {
-                  content: [{ 
-                    type: 'text', 
-                    text: "Error executing command: " + 
-                          (axios.isAxiosError(error) ? error.response?.data?.message || error.message : 'Unknown error')
-                  }]
-                };
-              }
-            }
-
-          case 'get_application_logs':
-            const uuid = request.params.arguments?.uuid;
-            const lines = request.params.arguments?.lines || 100;
-            if (!uuid) {
-              throw new McpError(ErrorCode.InvalidParams, 'uuid is required');
-            }
-            const logsResponse = await this.axiosInstance.get(`/applications/${uuid}/logs`, {
-              params: { lines }
-            });
-            return {
-              content: [{ type: 'text', text: JSON.stringify(logsResponse.data, null, 2) }]
-            };
-
-          // Deployments
-          case 'list_deployments':
-            const deploymentsResponse = await this.axiosInstance.get('/deployments');
-            return {
-              content: [{ type: 'text', text: JSON.stringify(deploymentsResponse.data, null, 2) }]
-            };
-
-          case 'get_deployment':
-            const deploymentResponse = await this.axiosInstance.get(`/deployments/${request.params.arguments?.uuid}`);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(deploymentResponse.data, null, 2) }]
-            };
-
-          // Private Keys
-          case 'list_private_keys':
-            const privateKeysResponse = await this.axiosInstance.get('/security/keys');
-            return {
-              content: [{ type: 'text', text: JSON.stringify(privateKeysResponse.data, null, 2) }]
-            };
-
-          case 'create_private_key':
-            const createPrivateKeyResponse = await this.axiosInstance.post('/security/keys', request.params.arguments);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(createPrivateKeyResponse.data, null, 2) }]
-            };
+          // ── Resources ──────────────────────────────────────────────────────
+          case 'list_resources': {
+            const r = await this.axiosInstance.get('/resources');
+            return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+          }
 
           default:
-            throw new McpError(
-              ErrorCode.MethodNotFound,
-              `Unknown tool: ${request.params.name}`
-            );
+            throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${request.params.name}`);
         }
       } catch (error) {
+        if (error instanceof McpError) throw error;
         if (axios.isAxiosError(error)) {
           throw new McpError(
             ErrorCode.InternalError,
-            `Coolify API error: ${error.response?.data?.message || error.message}`
+            `Coolify API error: ${error.response?.data?.message || error.response?.data?.error || error.message}`
           );
         }
         throw error;
@@ -1537,14 +2065,11 @@ class CoolifyServer {
     }
 
     this.initializeAxios({ baseUrl, token });
-    
-    // Detect Coolify version for feature compatibility
-    await this.detectCoolifyVersion();
-    
     this.setupToolHandlers();
 
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
+    console.error('Coolify MCP Server v4.1.1 running on stdio');
   }
 }
 

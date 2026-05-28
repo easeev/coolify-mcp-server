@@ -2,33 +2,19 @@
 
 <img src="graphics/CoolifyMCP.png" width="256" alt="Coolify MCP Logo" />
 
-A Model Context Protocol server that provides integration with the Coolify API. This server enables interaction with Coolify instances through MCP tools.
+A Model Context Protocol (MCP) server providing full coverage of the **Coolify v4.1.1** REST API. Manage applications, databases, services, servers, deployments, and more — all from any MCP-compatible AI client.
 
 <a href="https://glama.ai/mcp/servers/@wrediam/coolify-mcp-server">
   <img width="380" height="200" src="https://glama.ai/mcp/servers/@wrediam/coolify-mcp-server/badge" alt="Coolify Server MCP server" />
 </a>
 
-> **Compatibility:** Supports Coolify version 4.0.0-beta.380+ with automatic version detection and feature compatibility. Tested with versions up to 4.0.0-beta.420.1. API endpoints updated to match official Coolify documentation.
+> **Compatibility:** Coolify v4.1.1+ (stable, non-beta). API base: `https://<your-coolify-instance>/api/v1`
 
 ## Prerequisites
 
 - Node.js 18 or higher
-- Coolify Base URL
-- Coolify API token
-
-## Features
-
-- Teams management (list, get details, members)
-- **Project management (list, get, create)** ✨ **NEW**
-- **Environment management (list, create within projects)** ✨ **NEW**
-- Server management (create, validate, resources, domains)
-- Service lifecycle management (create, start, stop, restart)
-- Application lifecycle management (create, start, stop, restart, execute commands)
-- Deployment tracking
-- Private key management
-- Version and health checks
-- **Enhanced error reporting with detailed validation messages** ✨ **IMPROVED**
-- **Coolify UUID format compatibility** ✨ **FIXED**
+- A running Coolify v4.1.1+ instance
+- A Coolify API token (from **Security → API Tokens** in the dashboard)
 
 ## Installation
 
@@ -36,31 +22,20 @@ A Model Context Protocol server that provides integration with the Coolify API. 
 # Install globally
 npm install -g coolify-mcp-server
 
-# Or use with npx
+# Or use with npx (no install needed)
 npx coolify-mcp-server
 ```
 
 ## Configuration
 
-The server requires two environment variables:
+Set two environment variables:
 
-- `COOLIFY_BASE_URL`: The base URL of your Coolify instance
-- `COOLIFY_TOKEN`: Your Coolify API token
+| Variable | Description |
+|---|---|
+| `COOLIFY_BASE_URL` | Base URL of your Coolify instance (e.g. `https://coolify.example.com`) |
+| `COOLIFY_TOKEN` | Your Coolify API Bearer token |
 
-### Getting an API Token
-
-1. Go to your Coolify instance
-2. Navigate to `Keys & Tokens` / `API tokens`
-3. Create a new token with the following required permissions:
-   - read (for fetching information)
-   - write (for managing resources)
-   - deploy (for deployment operations)
-
-## Usage
-
-### In MCP Settings
-
-Add the following to your MCP settings configuration:
+### MCP Settings (Claude Desktop / Windsurf / Cline)
 
 ```json
 {
@@ -69,91 +44,97 @@ Add the following to your MCP settings configuration:
       "command": "npx",
       "args": ["-y", "coolify-mcp-server"],
       "env": {
-        "COOLIFY_BASE_URL": "your-coolify-url",
+        "COOLIFY_BASE_URL": "https://your-coolify-instance",
         "COOLIFY_TOKEN": "your-api-token"
-      },
-      "disabled": false,
-      "autoApprove": []
+      }
     }
   }
 }
 ```
 
-Windows Cline users may need the following:
-
+**Windows users** (Cline/cmd):
 ```json
 {
   "mcpServers": {
     "coolify": {
       "command": "cmd",
-      "args": [
-        "/c",
-        "npx",
-        "-y",
-        "coolify-mcp-server"
-      ],
+      "args": ["/c", "npx", "-y", "coolify-mcp-server"],
       "env": {
-        "COOLIFY_BASE_URL": "your-coolify-url",
+        "COOLIFY_BASE_URL": "https://your-coolify-instance",
         "COOLIFY_TOKEN": "your-api-token"
-      },
-      "disabled": false,
-      "autoApprove": []
+      }
     }
   }
 }
 ```
 
-### Available Tools
+## Available Tools
 
-#### Version & Health
-- `get_version`: Get Coolify version information
-- `health_check`: Check Coolify API health status
+### General
+- `get_version` — Get Coolify version
+- `health_check` — API health check (no auth)
+- `enable_api` / `disable_api` — Enable/disable the API (root token)
+- `enable_mcp` / `disable_mcp` — Enable/disable built-in MCP endpoint (root token)
 
-#### Teams
-- `list_teams`: List all teams
-- `get_team`: Get details of a specific team
-- `get_current_team`: Get current team details
-- `get_current_team_members`: Get current team members
+### Teams
+- `list_teams`, `get_team`, `get_team_members`
+- `get_current_team`, `get_current_team_members`
 
-#### Servers
-- `list_servers`: List all servers
-- `create_server`: Create a new server
-- `validate_server`: Validate server configuration
-- `get_server_resources`: Get server resource usage
-- `get_server_domains`: Get server domains
+### Servers
+- `list_servers`, `get_server`, `create_server`, `update_server`, `delete_server`
+- `validate_server`, `get_server_resources`, `get_server_domains`
+- `create_hetzner_server`
 
-#### Projects ✨ **NEW**
-- `list_projects`: List all projects
-- `get_project`: Get details of a specific project
-- `create_project`: Create a new project
+### Projects
+- `list_projects`, `get_project`, `create_project`, `update_project`, `delete_project`
 
-#### Environments ✨ **NEW**  
-- `list_environments`: List environments in a project
-- `create_environment`: Create a new environment within a project
+### Environments
+- `list_environments`, `get_environment`, `create_environment`, `delete_environment`
 
-#### Services
-- `list_services`: List all services
-- `create_service`: Create a new service
-- `start_service`: Start a service
-- `stop_service`: Stop a service
-- `restart_service`: Restart a service
+### Applications
+- `list_applications`, `get_application`
+- `create_public_application`, `create_private_github_app_application`, `create_private_deploy_key_application`
+- `create_dockerfile_application`, `create_dockerimage_application`, `create_dockercompose_application`
+- `update_application`, `delete_application`
+- `start_application`, `stop_application`, `restart_application`
+- `get_application_logs`
+- `list_application_envs`, `create_application_env`, `update_application_env`, `bulk_update_application_envs`, `delete_application_env`
+- `list_application_storages`, `create_application_storage`, `delete_application_storage`
+- `list_application_scheduled_tasks`, `create_application_scheduled_task`, `delete_application_scheduled_task`
 
-#### Applications
-- `list_applications`: List all applications
-- `create_application`: Create a new application
-- `start_application`: Start an application
-- `stop_application`: Stop an application
-- `restart_application`: Restart an application
-- `execute_command_application`: Execute command in application container
-- `get_application_logs`: Get application logs for debugging
+### Databases
+- `list_databases`, `get_database`, `update_database`, `delete_database`
+- `create_postgresql_database`, `create_mysql_database`, `create_mariadb_database`, `create_mongodb_database`
+- `create_redis_database`, `create_keydb_database`, `create_dragonfly_database`, `create_clickhouse_database`
+- `start_database`, `stop_database`, `restart_database`
+- `get_database_backups`, `create_database_backup`, `list_database_backup_executions`
+- `list_database_envs`, `create_database_env`, `delete_database_env`
 
-#### Deployments
-- `list_deployments`: List all deployments
-- `get_deployment`: Get deployment details
+### Services
+- `list_services`, `get_service`, `create_service`, `update_service`, `delete_service`
+- `start_service`, `stop_service`, `restart_service`
+- `list_service_envs`, `create_service_env`, `delete_service_env`
+- `list_service_scheduled_tasks`, `create_service_scheduled_task`, `delete_service_scheduled_task`
 
-#### Private Keys
-- `list_private_keys`: List all private keys
-- `create_private_key`: Create a new private key
+### Deployments
+- `list_deployments`, `get_deployment`, `cancel_deployment`
+- `list_deployments_by_application`, `deploy_by_tag_or_uuid`
+
+### Private Keys
+- `list_private_keys`, `get_private_key`, `create_private_key`, `update_private_key`, `delete_private_key`
+
+### GitHub Apps
+- `list_github_apps`, `create_github_app`, `delete_github_app`, `list_github_app_repositories`
+
+### Cloud Tokens
+- `list_cloud_tokens`, `create_cloud_token`, `delete_cloud_token`
+
+### Hetzner
+- `get_hetzner_locations`, `get_hetzner_server_types`, `get_hetzner_images`, `get_hetzner_ssh_keys`
+- `create_hetzner_server`
+
+### Resources
+- `list_resources` — All resources across the instance
 
 ## License
 
